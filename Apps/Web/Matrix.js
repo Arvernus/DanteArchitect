@@ -9,13 +9,102 @@ var devices = [];   // {name, el, tx:[{el,label,id}], rx:[{el,name,id,subDev,sub
 var cols = [];      // flache Liste aller TX-Spalten (mit Geräte-Ref)
 var rows = [];      // flache Liste aller RX-Reihen (mit Geräte-Ref)
 
-var editEnabled = false;   // Freigabe AN/AUS
-var editMode = "subs";     // "subs" | "names"
+// Edit-States
+var editSubsEnabled  = false; // Schalter: Bearbeiten/Abonnements
+var editNamesEnabled = false; // Schalter: Bearbeiten/Namen-Labels
+
+// Kollaps-Status für Gruppen (TX=Spalten-Gruppen, RX=Zeilen-Gruppen)
+var collapsedTx = Object.create(null);  // key = device index → true/false
+var collapsedRx = Object.create(null);
+
+// „Eingefrorene“ Mengen, wenn „Nur … mit Subs“ aktiviert wurde
+var frozenCols = null; // Set aus keys "tx:<devIndex>:<chanId>" ODER "txdev:<devIndex>" für kollabierten Device-Platzhalter
+var frozenRows = null; // Set aus keys "rx:<devIndex>:<chanId>" ODER "rxdev:<devIndex>"
 
 // --------- Helpers ----------
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
 function norm(s){ return (s||"").toLowerCase(); }
+function colKey(devIndex, chanId){ return chanId ? ("tx:"+devIndex+":"+chanId) : ("txdev:"+devIndex); }
+function rowKey(devIndex, chanId){ return chanId ? ("rx:"+devIndex+":"+chanId) : ("rxdev:"+devIndex); }
+function isFrozenColsMode(){ return !!frozenCols; }
+function isFrozenRowsMode(){ return !!frozenRows; }
+
+// Sichtbarkeit (ohne Frozen) einmal berechnen – wird in Render & Freeze genutzt
+function computeVisibleBase(){
+  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
+  var fTx = norm(fTxEl ? fTxEl.value : "");
+  var fRx = norm(fRxEl ? fRxEl.value : "");
+
+  function deviceMatchesTx(dev){
+    if(!fTx) return true;
+    if(norm(dev.name).indexOf(fTx) >= 0) return true;
+    for(var i=0;i<dev.tx.length;i++){
+      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
+    }
+    return false;
+  }
+  function deviceMatchesRx(dev){
+    if(!fRx) return true;
+    if(norm(dev.name).indexOf(fRx) >= 0) return true;
+    for(var i=0;i<dev.rx.length;i++){
+      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
+    }
+    return false;
+  }
+
+  var visCols = [];
+  devices.forEach(function(d, di){
+    if(!deviceMatchesTx(d)) return;
+    if(collapsedTx[di]) {
+      visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
+    } else {
+      d.tx.forEach(function(tx){
+        visCols.push({ dev:d, devIndex: di, isDevice:false, tx:tx });
+      });
+    }
+  });
+
+  var visRows = [];
+  devices.forEach(function(d, di){
+    if(!deviceMatchesRx(d)) return;
+    if(collapsedRx[di]) {
+      visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
+    } else {
+      d.rx.forEach(function(rx){
+        visRows.push({ dev:d, devIndex: di, isDevice:false, rx:rx });
+      });
+    }
+  });
+
+  return { visCols: visCols, visRows: visRows };
+}
+
+/** Erzeuge eine „eingefrorene“ Menge basierend auf der momentanen Ansicht (nur beim Aktivieren) */
+function freezeVisible(current){
+  // Spalten einfrieren?
+  var onlyCols = $("#onlyColsWithSubs");
+  if(onlyCols && onlyCols.checked){
+    var set = new Set();
+    current.visCols.forEach(function(c){
+      set.add(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
+    });
+    frozenCols = set;
+  } else {
+    frozenCols = null;
+  }
+  // Zeilen einfrieren?
+  var onlyRows = $("#onlyRowsWithSubs");
+  if(onlyRows && onlyRows.checked){
+    var setR = new Set();
+    current.visRows.forEach(function(r){
+      setR.add(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
+    });
+    frozenRows = setR;
+  } else {
+    frozenRows = null;
+  }
+}
 
 // --------- Init ----------
 (function init(){
@@ -24,14 +113,14 @@ function norm(s){ return (s||"").toLowerCase(); }
 
     // 1) zuerst localStorage
     try {
-      xml = localStorage.getItem("DA_PRESET_XML");
+      xml = localStorage.getItem(LS_KEY);
       if (xml && xml.trim()) source = "localStorage";
     } catch(_) { xml = null; }
 
     // 2) dann sessionStorage
     if (!xml || !xml.trim()){
       try {
-        xml = sessionStorage.getItem("DA_PRESET_XML");
+        xml = sessionStorage.getItem(LS_KEY);
         if (xml && xml.trim()) source = "sessionStorage";
       } catch(_) { xml = null; }
     }
@@ -46,15 +135,15 @@ function norm(s){ return (s||"").toLowerCase(); }
             xml = String(payload.xml);
             source = "window.name";
             // best effort zurückschreiben
-            try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-            try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+            try { localStorage.setItem(LS_KEY, xml); } catch(_) {}
+            try { sessionStorage.setItem(LS_KEY, xml); } catch(_) {}
           }
         }
       }catch(_){ xml = null; }
     }
 
     if (!xml || !xml.trim()){
-      var hint = document.getElementById("hint");
+      var hint = $("#hint");
       if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zur Übersicht zurück und Preset laden.";
       console.warn("Matrix init: no XML found in any source.");
       return;
@@ -67,20 +156,20 @@ function norm(s){ return (s||"").toLowerCase(); }
     xmlDoc = p.parseFromString(xml, "application/xml");
     var err = xmlDoc.querySelector("parsererror");
     if(err){
-      var hi = document.getElementById("hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
+      var hi = $("#hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
       return;
     }
 
     // Preset-Name in Chip
     var pname = xmlDoc.querySelector("preset > name");
-    var chip = document.getElementById("presetNameChip");
+    var chip = $("#presetNameChip");
     if(pname && chip) chip.textContent = "Preset: " + pname.textContent;
 
     buildModel();
     renderMatrix();
     bindUI();
   }catch(e){
-    var h = document.getElementById("hint");
+    var h = $("#hint");
     if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
     console.error("Matrix init error:", e);
   }
@@ -146,53 +235,20 @@ function renderMatrix(){
   thead.innerHTML = "";
   tbody.innerHTML  = "";
 
-  // --- kompakte Filter ---
-  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
-  var fTx = norm(fTxEl ? fTxEl.value : "");
-  var fRx = norm(fRxEl ? fRxEl.value : "");
-  var onlyRows = $("#onlyRowsWithSubs") && $("#onlyRowsWithSubs").checked;
-  var onlyCols = $("#onlyColsWithSubs") && $("#onlyColsWithSubs").checked;
+  // Basis-Sichtbarkeit berechnen
+  var base = computeVisibleBase();
+  var visCols = base.visCols.slice();
+  var visRows = base.visRows.slice();
 
-  function deviceMatchesTx(dev){
-    if(!fTx) return true;
-    if(norm(dev.name).indexOf(fTx) >= 0) return true;
-    for(var i=0;i<dev.tx.length;i++){
-      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
-    }
-    return false;
-  }
-  function deviceMatchesRx(dev){
-    if(!fRx) return true;
-    if(norm(dev.name).indexOf(fRx) >= 0) return true;
-    for(var i=0;i<dev.rx.length;i++){
-      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
-    }
-    return false;
-  }
-
-  // sichtbare Spalten (TX) und Zeilen (RX)
-  var visCols = [];
-  devices.forEach(function(d){
-    if(!deviceMatchesTx(d)) return;
-    d.tx.forEach(function(tx){ visCols.push({ dev:d, tx:tx }); });
-  });
-
-  var visRows = [];
-  devices.forEach(function(d){
-    if(!deviceMatchesRx(d)) return;
-    d.rx.forEach(function(rx){
-      if(onlyRows && !rx.subDev) return;
-      visRows.push({ dev:d, rx:rx });
-    });
-  });
-
-  if(onlyCols){
+  // Falls „eingefroren“ aktiv → auf eingefrorene Teilmengen reduzieren
+  if(isFrozenColsMode()){
     visCols = visCols.filter(function(c){
-      for(var i=0;i<visRows.length;i++){
-        var r = visRows[i];
-        if(r.rx.subDev === c.dev.name && r.rx.subChan === c.tx.label) return true;
-      }
-      return false;
+      return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
+    });
+  }
+  if(isFrozenRowsMode()){
+    visRows = visRows.filter(function(r){
+      return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
     });
   }
 
@@ -202,28 +258,39 @@ function renderMatrix(){
   var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
   tr0.appendChild(thRXDev); tr0.appendChild(thRXChan);
 
-  // group runs
+  // device-Runs aus visCols bilden
   var groupRuns = [];
-  var lastName = null, run = null;
+  var run = null;
   for(var cidx=0;cidx<visCols.length;cidx++){
     var c = visCols[cidx];
-    if(!run || run.name !== c.dev.name){
-      run = { name: c.dev.name, dev: c.dev, cols: [], count: 0 };
+    var dIdx = c.devIndex;
+    if(!run || run.devIndex !== dIdx){
+      run = { name: c.dev.name, dev: c.dev, devIndex: dIdx, cols: [], count: 0 };
       groupRuns.push(run);
     }
     run.cols.push(c);
     run.count++;
   }
+
   for(var g=0; g<groupRuns.length; g++){
     var grp = groupRuns[g];
     var th = cel("th","group");
     th.colSpan = grp.count;
+    th.style.background = "#f0f0f0";
 
+    // Toggle Button (kollabieren/aufklappen)
+    var toggle = cel("button","btn", collapsedTx[grp.devIndex] ? "+" : "–");
+    toggle.dataset.role = "toggle-tx";
+    toggle.dataset.devIndex = String(grp.devIndex);
+    toggle.style.marginRight = "6px";
+
+    // Name (editable nur im Namen-Modus)
     var span = cel("span","editable", grp.name || "(ohne Name)");
     span.dataset.role = "dev-name-tx";
-    span.dataset.devIndex = String(devices.indexOf(grp.dev));
-    if(editEnabled && editMode==="names"){ span.contentEditable = "true"; }
+    span.dataset.devIndex = String(grp.devIndex);
+    if(editNamesEnabled){ span.contentEditable = "true"; }
 
+    th.appendChild(toggle);
     th.appendChild(span);
     tr0.appendChild(th);
   }
@@ -235,12 +302,17 @@ function renderMatrix(){
   for(var i=0;i<visCols.length;i++){
     var cc = visCols[i];
     var thc = cel("th","tx-chan");
-    var spc = cel("span","editable", cc.tx.label || "");
-    spc.dataset.role = "tx-chan";
-    spc.dataset.devIndex = String(devices.indexOf(cc.dev));
-    spc.dataset.chanId   = String(cc.tx.id);
-    if(editEnabled && editMode==="names"){ spc.contentEditable = "true"; }
-    thc.appendChild(spc);
+    if (cc.isDevice) {
+      thc.style.background = "#f7f7f7";
+      thc.textContent = "";
+    } else {
+      var spc = cel("span","editable", cc.tx.label || "");
+      spc.dataset.role = "tx-chan";
+      spc.dataset.devIndex = String(cc.devIndex);
+      spc.dataset.chanId   = String(cc.tx.id);
+      if(editNamesEnabled){ spc.contentEditable = "true"; }
+      thc.appendChild(spc);
+    }
     tr1.appendChild(thc);
   }
 
@@ -252,40 +324,53 @@ function renderMatrix(){
     var row = visRows[r];
     var tr = cel("tr");
 
-    // RX-Gerätename
+    // RX-Gerätename (links, grau, mit Toggle)
     var thD = cel("th","rowhead");
+    thD.style.background = "#f0f0f0";
+    var toggleRx = cel("button","btn", collapsedRx[row.devIndex] ? "+" : "–");
+    toggleRx.dataset.role = "toggle-rx";
+    toggleRx.dataset.devIndex = String(row.devIndex);
+    toggleRx.style.marginRight = "6px";
+
     var dspan = cel("span","editable", row.dev.name || "(ohne Name)");
     dspan.dataset.role = "dev-name-rx";
-    dspan.dataset.devIndex = String(devices.indexOf(row.dev));
-    if(editEnabled && editMode==="names"){ dspan.contentEditable = "true"; }
+    dspan.dataset.devIndex = String(row.devIndex);
+    if(editNamesEnabled){ dspan.contentEditable = "true"; }
+    thD.appendChild(toggleRx);
     thD.appendChild(dspan);
     tr.appendChild(thD);
 
-    // RX-Kanalname
+    // RX-Kanalname (nur wenn nicht kollabiert)
     var thC = cel("th","rowchan");
-    var cspan = cel("span","editable", row.rx.name || "");
-    cspan.dataset.role = "rx-chan";
-    cspan.dataset.devIndex = String(devices.indexOf(row.dev));
-    cspan.dataset.chanId   = String(row.rx.id);
-    if(editEnabled && editMode==="names"){ cspan.contentEditable = "true"; }
-    thC.appendChild(cspan);
+    if (row.isDevice) {
+      thC.style.background = "#f7f7f7";
+      thC.textContent = "";
+    } else {
+      var cspan = cel("span","editable", row.rx.name || "");
+      cspan.dataset.role = "rx-chan";
+      cspan.dataset.devIndex = String(row.devIndex);
+      cspan.dataset.chanId   = String(row.rx.id);
+      if(editNamesEnabled){ cspan.contentEditable = "true"; }
+      thC.appendChild(cspan);
+    }
     tr.appendChild(thC);
 
     // Zellen
     for(var x=0; x<visCols.length; x++){
       var col = visCols[x];
-      var cellEditable = (editEnabled && editMode==="subs");
+      var cellEditable = (editSubsEnabled && !row.isDevice && !col.isDevice);
       var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
-      var isSub = (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
+      var isSub = (!row.isDevice && !col.isDevice) &&
+                  (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
       if(isSub){
         var dot = cel("span","dot","");
         td.appendChild(dot);
       }
       td.dataset.role = "cell";
-      td.dataset.rxDevIndex = String(devices.indexOf(row.dev));
-      td.dataset.rxChanId   = String(row.rx.id);
-      td.dataset.txDevIndex = String(devices.indexOf(col.dev));
-      td.dataset.txChanId   = String(col.tx.id);
+      td.dataset.rxDevIndex = String(row.devIndex);
+      td.dataset.rxChanId   = row.isDevice ? "" : String(row.rx.id);
+      td.dataset.txDevIndex = String(col.devIndex);
+      td.dataset.txChanId   = col.isDevice ? "" : String(col.tx.id);
       tr.appendChild(td);
     }
 
@@ -296,15 +381,35 @@ function renderMatrix(){
   thead.onclick = tbody.onclick = function(ev){
     var t = ev.target;
     if(!t || !t.dataset) return;
-    if(!editEnabled) return;
 
-    if(editMode === "names"){
-      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(newVal){ renameDevice(t, "tx", newVal); }); }
-      else if(t.dataset.role === "tx-chan"){ makeEditable(t, function(newVal){ renameTxChannel(t, newVal); }); }
-      else if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(newVal){ renameDevice(t, "rx", newVal); }); }
-      else if(t.dataset.role === "rx-chan"){ makeEditable(t, function(newVal){ renameRxChannel(t, newVal); }); }
-    } else if(editMode === "subs"){
-      if(t.dataset.role === "cell"){ toggleSubscription(t); }
+    // Kollaps/Expand
+    if(t.dataset.role === "toggle-tx"){
+      var di = parseInt(t.dataset.devIndex,10);
+      collapsedTx[di] = !collapsedTx[di];
+      renderMatrix();
+      return;
+    }
+    if(t.dataset.role === "toggle-rx"){
+      var di2 = parseInt(t.dataset.devIndex,10);
+      collapsedRx[di2] = !collapsedRx[di2];
+      renderMatrix();
+      return;
+    }
+
+    // Namen/Labels bearbeiten (nur wenn erlaubt)
+    if(editNamesEnabled){
+      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(newVal){ renameDevice(t, "tx", newVal); }); return; }
+      if(t.dataset.role === "tx-chan"){ makeEditable(t, function(newVal){ renameTxChannel(t, newVal); }); return; }
+      if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(newVal){ renameDevice(t, "rx", newVal); }); return; }
+      if(t.dataset.role === "rx-chan"){ makeEditable(t, function(newVal){ renameRxChannel(t, newVal); }); return; }
+    }
+
+    // Subscriptions toggeln (nur wenn erlaubt)
+    if(editSubsEnabled && t.dataset.role === "cell"){
+      // nur echte Kanal-Kombinationen erlauben
+      if(!t.dataset.rxChanId || !t.dataset.txChanId) return;
+      toggleSubscription(t);
+      return;
     }
   };
 }
@@ -450,40 +555,89 @@ function toggleSubscription(td){
 function persist(){
   try{
     var s = new XMLSerializer().serializeToString(xmlDoc);
-    localStorage.setItem(LS_KEY, s);
+    try { localStorage.setItem(LS_KEY, s); } catch(_) {}
+    try { sessionStorage.setItem(LS_KEY, s); } catch(_) {}
   }catch(e){
-    // still ignore, but show hint
     var h = $("#hint"); if(h) h.textContent = "Persist-Fehler: " + (e.message || String(e));
   }
 }
 
 // --------- UI Bindings ----------
 function bindUI(){
-  var toggleEdit = $("#toggleEdit");
-  if(toggleEdit){
-    toggleEdit.addEventListener("change", function(e){
-      editEnabled = !!e.target.checked;
+  // Bearbeiten-Toggles
+  var tSubs  = $("#toggleSubs");
+  var tNames = $("#toggleNames");
+  if(tSubs){
+    tSubs.addEventListener("change", function(e){
+      editSubsEnabled = !!e.target.checked;
       renderMatrix();
     });
   }
-  var modeSelect = $("#modeSelect");
-  if(modeSelect){
-    modeSelect.addEventListener("change", function(e){
-      editMode = (e.target.value === "names") ? "names" : "subs";
+  if(tNames){
+    tNames.addEventListener("change", function(e){
+      editNamesEnabled = !!e.target.checked;
       renderMatrix();
     });
   }
 
-  // kompakte Filter
-  ["fTx","fRx","onlyRowsWithSubs","onlyColsWithSubs"].forEach(function(id){
-    var el = document.getElementById(id);
+  // Filter live anwenden
+  ["fTx","fRx"].forEach(function(id){
+    var el = $("#"+id);
     if(!el) return;
-    var handler = function(){ renderMatrix(); };
-    if(el.type === "text"){ el.addEventListener("input", handler); }
-    else { el.addEventListener("change", handler); }
+    el.addEventListener("input", function(){ renderMatrix(); });
   });
 
-  // Speichern & Zurück
+  // „Nur … mit Subs“: Beim Aktivieren aktuelle Sicht EINFRIEREN, beim Deaktivieren aufheben
+  var chkRows = $("#onlyRowsWithSubs");
+  var chkCols = $("#onlyColsWithSubs");
+
+  if(chkRows){
+    chkRows.addEventListener("change", function(e){
+      if(e.target.checked){
+        var base = computeVisibleBase();
+        // aber: auf Zeilen beschränken, die aktuell tatsächlich ein Abo haben
+        base.visRows = base.visRows.filter(function(r){
+          if(r.isDevice) return true; // Platzhalter mit einfrieren
+          return !!(r.rx.subDev);
+        });
+        freezeVisible(base);
+      } else {
+        frozenRows = null;
+      }
+      renderMatrix();
+    });
+  }
+
+  if(chkCols){
+    chkCols.addEventListener("change", function(e){
+      if(e.target.checked){
+        var base = computeVisibleBase();
+        // auf Spalten beschränken, die in den (nicht kollabierten) Zeilen zumindest einmal vorkommen
+        var used = new Set();
+        base.visRows.forEach(function(r){
+          if(r.isDevice) return;
+          var sd = r.rx.subDev, sc = r.rx.subChan;
+          if(!sd || !sc) return;
+          // markiere alle TX-Spalten, die zu (sd,sc) passen
+          base.visCols.forEach(function(c){
+            if(c.isDevice) return;
+            if(c.dev.name === sd && c.tx.label === sc){
+              used.add(colKey(c.devIndex, c.tx.id));
+            }
+          });
+        });
+        base.visCols = base.visCols.filter(function(c){
+          return c.isDevice || used.has(colKey(c.devIndex, c.tx.id));
+        });
+        freezeVisible(base);
+      } else {
+        frozenCols = null;
+      }
+      renderMatrix();
+    });
+  }
+
+  // Speichern & zurück
   var back = $("#btnSaveBack");
   if(back){
     back.addEventListener("click", function(){
