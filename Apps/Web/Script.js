@@ -121,16 +121,16 @@ function readPresetFromAnyStorage(){
   return xml;
 }
 
-// ---- File handlers (FIX: Storage wird beim Laden sicher neu befüllt) ----
-var fi = $("#fileInput");
-if(fi){
-  fi.addEventListener("change", function(e){
-    try{
+// ---- File handlers (sicher: Storage sofort neu befüllen) ----
+var fi = document.querySelector("#fileInput");
+if (fi) {
+  fi.addEventListener("change", function (e) {
+    try {
       var f = e.target && e.target.files ? e.target.files[0] : null;
-      if(!f) return;
+      if (!f) return;
       var reader = new FileReader();
-      reader.onload = function(ev){
-        try{
+      reader.onload = function (ev) {
+        try {
           var t = String(ev.target.result || "");
           var doc = parseXml(t);
 
@@ -138,20 +138,22 @@ if(fi){
           lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
 
-          // **WICHTIG**: Storage JETZT neu schreiben (SS + LS + window.name)
-          writePresetToStorage(lastXmlDoc);
+          // **WICHTIG**: JETZT sofort in alle Übergabekanäle schreiben
+          var xml = new XMLSerializer().serializeToString(lastXmlDoc);
+          try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+          try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+          try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
 
-          // Matrix-Button aktivieren
-          var bm = $("#btnMatrix");
-          if (bm) bm.disabled = false;
-          var be = $("#btnExport");
-          if (be) be.disabled = false;
-        }catch(err){
+          // Buttons freischalten
+          var bm = document.getElementById("btnMatrix"); if (bm) bm.disabled = false;
+          var be = document.getElementById("btnExport"); if (be) be.disabled = false;
+
+        } catch (err) {
           alert(err.message || String(err));
         }
       };
       reader.readAsText(f);
-    }catch(err){
+    } catch (err) {
       alert(err.message || String(err));
     }
   });
@@ -254,19 +256,49 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
 
-// ---- Matrix-Button aktivieren & Navigation ----
+// ---- Matrix-Button aktivieren & Navigation (immer frisch schreiben) ----
 (function () {
   var bm = document.getElementById("btnMatrix");
   if (!bm) return;
 
-  // prüfen, ob schon ein Preset irgendwo existiert
-  var hasAny = !!readPresetFromAnyStorage();
-  bm.disabled = !hasAny;
+  function readPresetFromAnyStorage(){
+    var xml = null;
+    try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
+    if (!xml) { try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
+    if (!xml && window.name) {
+      try {
+        var payload = JSON.parse(window.name);
+        if (payload && payload.type === "DA_PRESET" && payload.xml) xml = String(payload.xml);
+      } catch(_) {}
+    }
+    return xml;
+  }
+
+  // beim Laden: Button aktivieren, wenn irgendwas da ist
+  bm.disabled = !readPresetFromAnyStorage() && !lastXmlDoc;
 
   bm.onclick = function () {
-    // falls zuletzt nur aus Storage gearbeitet wurde, nichts weiter tun
-    if (lastXmlDoc) writePresetToStorage(lastXmlDoc);
-    location.href = "./Matrix.html#via=stash";
+    // 1) bevorzugt den aktuell im RAM gehaltenen Stand nehmen
+    var xml = null;
+    if (lastXmlDoc) {
+      xml = new XMLSerializer().serializeToString(lastXmlDoc);
+    } else {
+      // 2) ansonsten das, was schon im Storage liegt
+      xml = readPresetFromAnyStorage();
+    }
+
+    if (!xml) {
+      alert("Kein Preset geladen.");
+      return;
+    }
+
+    // **Vor Navigation** sicher in alle Kanäle schreiben (überschreibt alte Stände)
+    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
+
+    // 3) navigieren
+    location.href = "./Matrix.html#via=btn";
   };
 })();
 
