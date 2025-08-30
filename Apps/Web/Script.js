@@ -267,6 +267,7 @@ try { connect(); } catch(e) {}
     // navigieren
     location.href = "./Matrix.html#via=windowname";
   };
+};
 
 (function () {
   var bm = document.getElementById("btnMatrix");
