@@ -555,8 +555,10 @@ function toggleSubscription(td){
 function persist(){
   try{
     var s = new XMLSerializer().serializeToString(xmlDoc);
+    // robust in alle Kanäle schreiben (Navigation ist sicher)
     try { localStorage.setItem(LS_KEY, s); } catch(_) {}
     try { sessionStorage.setItem(LS_KEY, s); } catch(_) {}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: s }); } catch(_) {}
   }catch(e){
     var h = $("#hint"); if(h) h.textContent = "Persist-Fehler: " + (e.message || String(e));
   }
@@ -595,9 +597,9 @@ function bindUI(){
     chkRows.addEventListener("change", function(e){
       if(e.target.checked){
         var base = computeVisibleBase();
-        // aber: auf Zeilen beschränken, die aktuell tatsächlich ein Abo haben
+        // auf Zeilen beschränken, die aktuell tatsächlich ein Abo haben (+ Device-Platzhalter)
         base.visRows = base.visRows.filter(function(r){
-          if(r.isDevice) return true; // Platzhalter mit einfrieren
+          if(r.isDevice) return true;
           return !!(r.rx.subDev);
         });
         freezeVisible(base);
@@ -618,7 +620,6 @@ function bindUI(){
           if(r.isDevice) return;
           var sd = r.rx.subDev, sc = r.rx.subChan;
           if(!sd || !sc) return;
-          // markiere alle TX-Spalten, die zu (sd,sc) passen
           base.visCols.forEach(function(c){
             if(c.isDevice) return;
             if(c.dev.name === sd && c.tx.label === sc){
@@ -637,12 +638,12 @@ function bindUI(){
     });
   }
 
-  // Speichern & zurück
+  // Speichern & zurück (Persist → zurück zur Übersicht)
   var back = $("#btnSaveBack");
   if(back){
     back.addEventListener("click", function(){
       persist();
-      location.href = "./Index.html";
+      location.href = "./Index.html#via=matrix";
     });
   }
 }

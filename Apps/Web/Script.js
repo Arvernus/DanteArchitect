@@ -276,3 +276,40 @@ try { connect(); } catch(e) {}
     }
   };
 })();
+
+// --- Safe Autoload: nur aus Storage, niemals Templates laden/erzeugen ---
+(function safeAutoloadFromStorage(){
+  try {
+    // Wenn bereits ein lastXmlDoc existiert (z. B. gerade Datei geladen), nichts tun
+    if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) return;
+
+    // Reihenfolge: sessionStorage → localStorage → window.name (nur wenn type=DA_PRESET)
+    var xml = null;
+
+    try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
+    if (!xml) { try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
+    if (!xml && window.name) {
+      try {
+        var payload = JSON.parse(window.name);
+        if (payload && payload.type === "DA_PRESET" && payload.xml) {
+          xml = String(payload.xml);
+        }
+      } catch(_) {}
+    }
+
+    // NUR wenn wir wirklich XML aus Storage haben → anzeigen; KEINE Templates/Defaults bauen!
+    if (xml && xml.trim()) {
+      var doc = new DOMParser().parseFromString(xml, "application/xml");
+      var err = doc.querySelector("parsererror");
+      if (!err) {
+        lastXmlDoc = doc;
+        // UI aus vorhandenem Preset aktualisieren
+        if (typeof fillPresetTable === "function") fillPresetTable(lastXmlDoc);
+        var bm = document.getElementById("btnMatrix"); if (bm) bm.disabled = false;
+        var be = document.getElementById("btnExport"); if (be) be.disabled = false;
+      }
+    }
+  } catch (e) {
+    console.warn("safeAutoloadFromStorage skipped:", e);
+  }
+})();
