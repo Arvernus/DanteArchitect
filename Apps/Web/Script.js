@@ -3,20 +3,50 @@ const HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan
 
 // ---- State ----
 let lastXmlDoc = null;
-let helperState = "disconnected";
+let helperState = "disconnected";   // "connected" | "connecting" | "disconnected"
+let lastHelperState = null;         // um nur bei echtem Wechsel die LED zu ändern
 let backoff = 1000, maxBackoff = 30000, timer = null;
+let isChecking = false;
 
 // ---- DOM helpers ----
 function $(sel){ return document.querySelector(sel); }
 function rowHtml(cols){ return "<tr>" + cols.map(c=>`<td>${c}</td>`).join("") + "</tr>"; }
 
-function setStatus(state){
-  helperState = state;
-  const el = $("#helperStatus");
+// ---- Statusbar helpers ----
+function setLed(state){
+  const led = $("#statusLed");
+  led.classList.remove("green","yellow","red");
+  if(state === "connected") led.classList.add("green");
+  else if(state === "connecting") led.classList.add("yellow");
+  else led.classList.add("red");
+}
+function setStatusText(txt){
+  const t = $("#statusText"); if(t) t.textContent = txt;
+}
+function setSpinner(active){
+  const sp = $("#statusSpinner");
+  if(!sp) return;
+  if(active) sp.classList.add("active"); else sp.classList.remove("active");
+}
+function setTimestamp(ts){
+  const el = $("#statusTimestamp");
   if(!el) return;
-  if(state==="connected"){ el.textContent="Online-Scan aktiv"; }
-  else if(state==="connecting"){ el.textContent="Verbinde…"; }
-  else { el.textContent="Offline"; const oi=$("#onlineInfo"); if(oi) oi.textContent="Helper nicht verbunden – arbeite offline"; }
+  el.textContent = ts ? ("Stand: " + new Date(ts).toLocaleTimeString()) : "";
+}
+
+function setState(newState, options={ announceWhenDone:true }){
+  // LED/Status nur ändern, wenn sich der Zustand wirklich geändert hat
+  if(newState !== lastHelperState){
+    if(options.announceWhenDone){
+      // Wechsel erst NACH abgeschlossener Prüfung anzeigen (soll heißen: hier sind wir bereits sicher)
+      setLed(newState);
+      if(newState === "connected") setStatusText("Online-Scan aktiv");
+      else if(newState === "connecting") setStatusText("Verbinde…");
+      else setStatusText("Offline");
+      lastHelperState = newState;
+    }
+  }
+  helperState = newState;
 }
 
 // ---- XML helpers ----
@@ -38,12 +68,9 @@ function fillPresetTable(xml){
   if(!tbody) return;
   tbody.innerHTML = "";
 
-  // robust: finde Geräte überall unterhalb von <preset>
   let devices = Array.from(xml.querySelectorAll("preset > device"));
-  if(devices.length === 0) {
-    // Fallback: falls Struktur leicht abweicht (ältere Exporte)
-    devices = Array.from(xml.querySelectorAll("device"));
-  }
+  if(devices.length === 0) devices = Array.from(xml.querySelectorAll("device"));
+
   devices.forEach(d=>{
     const name = d.querySelector("name")?.textContent?.trim() || "(ohne Name)";
     const tx = d.querySelectorAll("txchannel").length;
@@ -51,7 +78,6 @@ function fillPresetTable(xml){
     tbody.insertAdjacentHTML("beforeend", rowHtml([name, tx, rx]));
   });
 
-  // Export-Button aktivieren, wenn mindestens 1 Gerät vorhanden ist
   const btn = $("#btnExport");
   if(btn) btn.disabled = devices.length === 0;
 }
@@ -63,8 +89,9 @@ function fillOnlineTable(list){
   list.forEach(dev=>{
     tbody.insertAdjacentHTML("beforeend", rowHtml([dev.name||"", dev.ip||"", dev.manufacturer||""]));
   });
+
   const oi=$("#onlineInfo");
-  if(oi) oi.textContent = "Stand: " + new Date().toLocaleTimeString();
+  if(oi) oi.textContent = list?.length ? "Gefundene Geräte" : "Keine Geräte gefunden";
 }
 
 function fillLibTable(){
@@ -107,12 +134,16 @@ $("#btnExport")?.addEventListener("click", ()=>{
 async function ping(timeout=600){
   const ctrl = new AbortController(); const to = setTimeout(()=>ctrl.abort(), timeout);
   try{
+    setSpinner(true); isChecking = true;
     const r = await fetch(HELPER.base+HELPER.health, {signal: ctrl.signal, cache:"no-store"});
     clearTimeout(to);
-    if(!r.ok) return false;
-    const j = await r.json();
-    return j?.ok===true;
-  }catch(e){ clearTimeout(to); return false; }
+    return r.ok && (await r.json())?.ok === true;
+  }catch(e){
+    clearTimeout(to);
+    return false;
+  } finally {
+    // Spinner bleibt aktiv, bis wir ggf. noch scan() gemacht haben
+  }
 }
 async function scan(timeout=1200){
   const ctrl = new AbortController(); const to = setTimeout(()=>ctrl.abort(), timeout);
@@ -122,7 +153,12 @@ async function scan(timeout=1200){
     if(!r.ok) return;
     const j = await r.json();
     fillOnlineTable(j);
-  }catch(e){ clearTimeout(to); }
+    setTimestamp(Date.now());
+  }catch(e){
+    clearTimeout(to);
+  } finally {
+    setSpinner(false); isChecking = false;
+  }
 }
 function scheduleRetry(){
   clearTimeout(timer);
@@ -132,22 +168,23 @@ function scheduleRetry(){
   backoff = Math.min(backoff*2, maxBackoff);
 }
 async function connect(){
-  setStatus("connecting");
+  // wir zeigen erst gelb, updaten LED aber wirklich nur beim bestätigten Wechsel
+  setState("connecting", {announceWhenDone:false});
   const ok = await ping(600);
   if(ok){
-    setStatus("connected"); backoff = 1000;
+    setState("connected"); backoff = 1000;
     await scan(1200);
     clearTimeout(timer);
     timer = setTimeout(loop, 4000);
   }else{
-    setStatus("disconnected");
+    setState("disconnected");
     scheduleRetry();
   }
 }
 async function loop(){
   if(helperState!=="connected") return;
   const ok = await ping(600);
-  if(!ok){ setStatus("disconnected"); return scheduleRetry(); }
+  if(!ok){ setState("disconnected"); return scheduleRetry(); }
   await scan(1000);
   clearTimeout(timer);
   timer = setTimeout(loop, 4000);
