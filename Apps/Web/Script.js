@@ -109,6 +109,8 @@ if(fi){
         try{
           var t = String(ev.target.result || "");
           lastXmlDoc = parseXml(t);
+          localStorage.setItem("DA_PRESET_XML", t);
+          var bm = document.getElementById("btnMatrix"); if(bm) bm.disabled = false;
           fillPresetTable(lastXmlDoc);
         }catch(err){
           alert(err.message || String(err));
@@ -209,3 +211,5 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 // ---- Init ----
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
+var bm = document.getElementById("btnMatrix");
+if(bm){ bm.disabled = !localStorage.getItem("DA_PRESET_XML"); bm.onclick = function(){ location.href = "./Matrix.html"; }; }
