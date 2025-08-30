@@ -1,25 +1,23 @@
 // Apps/Web/Matrix.js
 
-// --------- Konstanten / Storage-Key ----------
-var LS_KEY = "DA_PRESET_XML"; // Startseite legt hier das geladene Preset ab
+// --------- Konstanten ----------
+var SKEY_XML  = "DA_PRESET_XML";
+var SKEY_META = "DA_PRESET_META";
 
 // --------- Working State ----------
 var xmlDoc = null;
-var devices = [];   // {name, el, tx:[{el,label,id}], rx:[{el,name,id,subDev,subChan}]}
-var cols = [];      // flache Liste aller TX-Spalten (mit Geräte-Ref)
-var rows = [];      // flache Liste aller RX-Reihen (mit Geräte-Ref)
+var devices = [];
+var cols = [];
+var rows = [];
 
-// Edit-States
-var editSubsEnabled  = false; // Schalter: Bearbeiten/Abonnements
-var editNamesEnabled = false; // Schalter: Bearbeiten/Namen-Labels
+var editSubsEnabled  = false;
+var editNamesEnabled = false;
 
-// Kollaps-Status für Gruppen (TX=Spalten-Gruppen, RX=Zeilen-Gruppen)
-var collapsedTx = Object.create(null);  // key = device index → true/false
+var collapsedTx = Object.create(null);
 var collapsedRx = Object.create(null);
 
-// „Eingefrorene“ Mengen, wenn „Nur … mit Subs“ aktiviert wurde
-var frozenCols = null; // Set aus keys "tx:<devIndex>:<chanId>" ODER "txdev:<devIndex>" für kollabierten Device-Platzhalter
-var frozenRows = null; // Set aus keys "rx:<devIndex>:<chanId>" ODER "rxdev:<devIndex>"
+var frozenCols = null;
+var frozenRows = null;
 
 // --------- Helpers ----------
 function $(s){ return document.querySelector(s); }
@@ -30,126 +28,40 @@ function rowKey(devIndex, chanId){ return chanId ? ("rx:"+devIndex+":"+chanId) :
 function isFrozenColsMode(){ return !!frozenCols; }
 function isFrozenRowsMode(){ return !!frozenRows; }
 
-// Sichtbarkeit (ohne Frozen) einmal berechnen – wird in Render & Freeze genutzt
-function computeVisibleBase(){
-  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
-  var fTx = norm(fTxEl ? fTxEl.value : "");
-  var fRx = norm(fRxEl ? fRxEl.value : "");
-
-  function deviceMatchesTx(dev){
-    if(!fTx) return true;
-    if(norm(dev.name).indexOf(fTx) >= 0) return true;
-    for(var i=0;i<dev.tx.length;i++){
-      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
-    }
-    return false;
-  }
-  function deviceMatchesRx(dev){
-    if(!fRx) return true;
-    if(norm(dev.name).indexOf(fRx) >= 0) return true;
-    for(var i=0;i<dev.rx.length;i++){
-      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
-    }
-    return false;
-  }
-
-  var visCols = [];
-  devices.forEach(function(d, di){
-    if(!deviceMatchesTx(d)) return;
-    if(collapsedTx[di]) {
-      visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
-    } else {
-      d.tx.forEach(function(tx){
-        visCols.push({ dev:d, devIndex: di, isDevice:false, tx:tx });
-      });
-    }
-  });
-
-  var visRows = [];
-  devices.forEach(function(d, di){
-    if(!deviceMatchesRx(d)) return;
-    if(collapsedRx[di]) {
-      visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
-    } else {
-      d.rx.forEach(function(rx){
-        visRows.push({ dev:d, devIndex: di, isDevice:false, rx:rx });
-      });
-    }
-  });
-
-  return { visCols: visCols, visRows: visRows };
+function readFromSession(){
+  var xml = null; try { xml = sessionStorage.getItem(SKEY_XML); } catch(_) {}
+  return xml;
 }
-
-/** Erzeuge eine „eingefrorene“ Menge basierend auf der momentanen Ansicht (nur beim Aktivieren) */
-function freezeVisible(current){
-  // Spalten einfrieren?
-  var onlyCols = $("#onlyColsWithSubs");
-  if(onlyCols && onlyCols.checked){
-    var set = new Set();
-    current.visCols.forEach(function(c){
-      set.add(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
-    });
-    frozenCols = set;
-  } else {
-    frozenCols = null;
-  }
-  // Zeilen einfrieren?
-  var onlyRows = $("#onlyRowsWithSubs");
-  if(onlyRows && onlyRows.checked){
-    var setR = new Set();
-    current.visRows.forEach(function(r){
-      setR.add(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
-    });
-    frozenRows = setR;
-  } else {
-    frozenRows = null;
-  }
+function readFromWindowName(){
+  if(!window.name) return null;
+  try{
+    var payload = JSON.parse(window.name);
+    if(payload && payload.type === "DA_PRESET" && payload.xml) return String(payload.xml);
+  }catch(_){}
+  return null;
+}
+function writeToSessionAndName(xml){
+  try { sessionStorage.setItem(SKEY_XML, xml); } catch(_) {}
+  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml, ts: Date.now() }); } catch(_) {}
 }
 
 // --------- Init ----------
 (function init(){
   try{
-    var xml = null, source = "none";
-
-    // 1) zuerst localStorage
-    try {
-      xml = localStorage.getItem(LS_KEY);
-      if (xml && xml.trim()) source = "localStorage";
-    } catch(_) { xml = null; }
-
-    // 2) dann sessionStorage
-    if (!xml || !xml.trim()){
-      try {
-        xml = sessionStorage.getItem(LS_KEY);
-        if (xml && xml.trim()) source = "sessionStorage";
-      } catch(_) { xml = null; }
-    }
-
-    // 3) dann window.name (vom Index gesetzt)
-    if (!xml || !xml.trim()){
-      try{
-        if (window.name) {
-          var payload = null;
-          try { payload = JSON.parse(window.name); } catch(_) {}
-          if (payload && payload.type === "DA_PRESET" && payload.xml) {
-            xml = String(payload.xml);
-            source = "window.name";
-            // best effort zurückschreiben
-            try { localStorage.setItem(LS_KEY, xml); } catch(_) {}
-            try { sessionStorage.setItem(LS_KEY, xml); } catch(_) {}
-          }
-        }
-      }catch(_){ xml = null; }
+    var xml = readFromSession();
+    if(!xml || !xml.trim()){
+      xml = readFromWindowName();
+      if(xml){
+        // Sync zurück in Session (einheitlicher Pfad)
+        writeToSessionAndName(xml);
+      }
     }
 
     if (!xml || !xml.trim()){
       var hint = $("#hint");
       if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zur Übersicht zurück und Preset laden.";
-      console.warn("Matrix init: no XML found in any source.");
       return;
     }
-
-    console.info("Matrix init: XML loaded from", source);
 
     // XML parsen
     var p = new DOMParser();
@@ -217,15 +129,81 @@ function buildModel(){
   });
 
   devices.forEach(function(d){
-    d.tx.forEach(function(tx){
-      cols.push({ dev:d, tx:tx });
-    });
+    d.tx.forEach(function(tx){ cols.push({ dev:d, tx:tx }); });
   });
   devices.forEach(function(d){
-    d.rx.forEach(function(rx){
-      rows.push({ dev:d, rx:rx });
-    });
+    d.rx.forEach(function(rx){ rows.push({ dev:d, rx:rx }); });
   });
+}
+
+// --------- Sichtbarkeitsbasis ----------
+function computeVisibleBase(){
+  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
+  var fTx = norm(fTxEl ? fTxEl.value : "");
+  var fRx = norm(fRxEl ? fRxEl.value : "");
+
+  function deviceMatchesTx(dev){
+    if(!fTx) return true;
+    if(norm(dev.name).indexOf(fTx) >= 0) return true;
+    for(var i=0;i<dev.tx.length;i++){
+      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
+    }
+    return false;
+  }
+  function deviceMatchesRx(dev){
+    if(!fRx) return true;
+    if(norm(dev.name).indexOf(fRx) >= 0) return true;
+    for(var i=0;i<dev.rx.length;i++){
+      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
+    }
+    return false;
+  }
+
+  var visCols = [];
+  devices.forEach(function(d, di){
+    if(!deviceMatchesTx(d)) return;
+    if(collapsedTx[di]) {
+      visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
+    } else {
+      d.tx.forEach(function(tx){
+        visCols.push({ dev:d, devIndex: di, isDevice:false, tx:tx });
+      });
+    }
+  });
+
+  var visRows = [];
+  devices.forEach(function(d, di){
+    if(!deviceMatchesRx(d)) return;
+    if(collapsedRx[di]) {
+      visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
+    } else {
+      d.rx.forEach(function(rx){
+        visRows.push({ dev:d, devIndex: di, isDevice:false, rx:rx });
+      });
+    }
+  });
+
+  return { visCols: visCols, visRows: visRows };
+}
+
+function freezeVisible(current){
+  var onlyCols = $("#onlyColsWithSubs");
+  if(onlyCols && onlyCols.checked){
+    var set = new Set();
+    current.visCols.forEach(function(c){
+      set.add(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
+    });
+    frozenCols = set;
+  } else { frozenCols = null; }
+
+  var onlyRows = $("#onlyRowsWithSubs");
+  if(onlyRows && onlyRows.checked){
+    var setR = new Set();
+    current.visRows.forEach(function(r){
+      setR.add(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
+    });
+    frozenRows = setR;
+  } else { frozenRows = null; }
 }
 
 // --------- Render ----------
@@ -235,32 +213,19 @@ function renderMatrix(){
   thead.innerHTML = "";
   tbody.innerHTML  = "";
 
-  // Basis-Sichtbarkeit berechnen
   var base = computeVisibleBase();
   var visCols = base.visCols.slice();
   var visRows = base.visRows.slice();
 
-  // Falls „eingefroren“ aktiv → auf eingefrorene Teilmengen reduzieren
-  if(isFrozenColsMode()){
-    visCols = visCols.filter(function(c){
-      return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
-    });
-  }
-  if(isFrozenRowsMode()){
-    visRows = visRows.filter(function(r){
-      return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
-    });
-  }
+  if(frozenCols){ visCols = visCols.filter(function(c){ return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id))); }); }
+  if(frozenRows){ visRows = visRows.filter(function(r){ return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id))); }); }
 
-  // --- Header: Gruppe TX-Geräte ---
   var tr0 = cel("tr");
   var thRXDev = cel("th","top-left-0","RX Gerät"); thRXDev.style.minWidth="220px";
   var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
   tr0.appendChild(thRXDev); tr0.appendChild(thRXChan);
 
-  // device-Runs aus visCols bilden
-  var groupRuns = [];
-  var run = null;
+  var groupRuns = [], run = null;
   for(var cidx=0;cidx<visCols.length;cidx++){
     var c = visCols[cidx];
     var dIdx = c.devIndex;
@@ -268,34 +233,20 @@ function renderMatrix(){
       run = { name: c.dev.name, dev: c.dev, devIndex: dIdx, cols: [], count: 0 };
       groupRuns.push(run);
     }
-    run.cols.push(c);
-    run.count++;
+    run.cols.push(c); run.count++;
   }
 
   for(var g=0; g<groupRuns.length; g++){
     var grp = groupRuns[g];
-    var th = cel("th","group");
-    th.colSpan = grp.count;
-    th.style.background = "#f0f0f0";
-
-    // Toggle Button (kollabieren/aufklappen)
+    var th = cel("th","group"); th.colSpan = grp.count; th.style.background = "#f0f0f0";
     var toggle = cel("button","btn", collapsedTx[grp.devIndex] ? "+" : "–");
-    toggle.dataset.role = "toggle-tx";
-    toggle.dataset.devIndex = String(grp.devIndex);
-    toggle.style.marginRight = "6px";
-
-    // Name (editable nur im Namen-Modus)
+    toggle.dataset.role = "toggle-tx"; toggle.dataset.devIndex = String(grp.devIndex); toggle.style.marginRight = "6px";
     var span = cel("span","editable", grp.name || "(ohne Name)");
-    span.dataset.role = "dev-name-tx";
-    span.dataset.devIndex = String(grp.devIndex);
+    span.dataset.role = "dev-name-tx"; span.dataset.devIndex = String(grp.devIndex);
     if(editNamesEnabled){ span.contentEditable = "true"; }
-
-    th.appendChild(toggle);
-    th.appendChild(span);
-    tr0.appendChild(th);
+    th.appendChild(toggle); th.appendChild(span); tr0.appendChild(th);
   }
 
-  // --- Header: TX Kanalzeile ---
   var tr1 = cel("tr");
   tr1.appendChild(cel("th","rowhead",""));
   tr1.appendChild(cel("th","rowchan",""));
@@ -319,53 +270,35 @@ function renderMatrix(){
   thead.appendChild(tr0);
   thead.appendChild(tr1);
 
-  // --- Body: RX Zeilen ---
   for(var r=0; r<visRows.length; r++){
     var row = visRows[r];
     var tr = cel("tr");
 
-    // RX-Gerätename (links, grau, mit Toggle)
-    var thD = cel("th","rowhead");
-    thD.style.background = "#f0f0f0";
+    var thD = cel("th","rowhead"); thD.style.background = "#f0f0f0";
     var toggleRx = cel("button","btn", collapsedRx[row.devIndex] ? "+" : "–");
-    toggleRx.dataset.role = "toggle-rx";
-    toggleRx.dataset.devIndex = String(row.devIndex);
-    toggleRx.style.marginRight = "6px";
-
+    toggleRx.dataset.role = "toggle-rx"; toggleRx.dataset.devIndex = String(row.devIndex); toggleRx.style.marginRight = "6px";
     var dspan = cel("span","editable", row.dev.name || "(ohne Name)");
-    dspan.dataset.role = "dev-name-rx";
-    dspan.dataset.devIndex = String(row.devIndex);
+    dspan.dataset.role = "dev-name-rx"; dspan.dataset.devIndex = String(row.devIndex);
     if(editNamesEnabled){ dspan.contentEditable = "true"; }
-    thD.appendChild(toggleRx);
-    thD.appendChild(dspan);
-    tr.appendChild(thD);
+    thD.appendChild(toggleRx); thD.appendChild(dspan); tr.appendChild(thD);
 
-    // RX-Kanalname (nur wenn nicht kollabiert)
     var thC = cel("th","rowchan");
-    if (row.isDevice) {
-      thC.style.background = "#f7f7f7";
-      thC.textContent = "";
-    } else {
+    if (row.isDevice) { thC.style.background = "#f7f7f7"; thC.textContent = ""; }
+    else {
       var cspan = cel("span","editable", row.rx.name || "");
-      cspan.dataset.role = "rx-chan";
-      cspan.dataset.devIndex = String(row.devIndex);
-      cspan.dataset.chanId   = String(row.rx.id);
+      cspan.dataset.role = "rx-chan"; cspan.dataset.devIndex = String(row.devIndex); cspan.dataset.chanId   = String(row.rx.id);
       if(editNamesEnabled){ cspan.contentEditable = "true"; }
       thC.appendChild(cspan);
     }
     tr.appendChild(thC);
 
-    // Zellen
     for(var x=0; x<visCols.length; x++){
       var col = visCols[x];
       var cellEditable = (editSubsEnabled && !row.isDevice && !col.isDevice);
       var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
       var isSub = (!row.isDevice && !col.isDevice) &&
                   (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
-      if(isSub){
-        var dot = cel("span","dot","");
-        td.appendChild(dot);
-      }
+      if(isSub){ td.appendChild(cel("span","dot","")); }
       td.dataset.role = "cell";
       td.dataset.rxDevIndex = String(row.devIndex);
       td.dataset.rxChanId   = row.isDevice ? "" : String(row.rx.id);
@@ -374,42 +307,27 @@ function renderMatrix(){
       tr.appendChild(td);
     }
 
-    tbody.appendChild(tr);
+    $("#tbody").appendChild(tr);
   }
 
-  // --- Interaktion (delegiert) ---
-  thead.onclick = tbody.onclick = function(ev){
-    var t = ev.target;
-    if(!t || !t.dataset) return;
+  // Delegierte Interaktion
+  var theadEl = $("#thead"), tbodyEl = $("#tbody");
+  theadEl.onclick = tbodyEl.onclick = function(ev){
+    var t = ev.target; if(!t || !t.dataset) return;
 
-    // Kollaps/Expand
-    if(t.dataset.role === "toggle-tx"){
-      var di = parseInt(t.dataset.devIndex,10);
-      collapsedTx[di] = !collapsedTx[di];
-      renderMatrix();
-      return;
-    }
-    if(t.dataset.role === "toggle-rx"){
-      var di2 = parseInt(t.dataset.devIndex,10);
-      collapsedRx[di2] = !collapsedRx[di2];
-      renderMatrix();
-      return;
-    }
+    if(t.dataset.role === "toggle-tx"){ var di = parseInt(t.dataset.devIndex,10); collapsedTx[di] = !collapsedTx[di]; renderMatrix(); return; }
+    if(t.dataset.role === "toggle-rx"){ var di2= parseInt(t.dataset.devIndex,10); collapsedRx[di2] = !collapsedRx[di2]; renderMatrix(); return; }
 
-    // Namen/Labels bearbeiten (nur wenn erlaubt)
     if(editNamesEnabled){
-      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(newVal){ renameDevice(t, "tx", newVal); }); return; }
-      if(t.dataset.role === "tx-chan"){ makeEditable(t, function(newVal){ renameTxChannel(t, newVal); }); return; }
-      if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(newVal){ renameDevice(t, "rx", newVal); }); return; }
-      if(t.dataset.role === "rx-chan"){ makeEditable(t, function(newVal){ renameRxChannel(t, newVal); }); return; }
+      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(v){ renameDevice(t,"tx",v); }); return; }
+      if(t.dataset.role === "tx-chan"){ makeEditable(t, function(v){ renameTxChannel(t,v); }); return; }
+      if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(v){ renameDevice(t,"rx",v); }); return; }
+      if(t.dataset.role === "rx-chan"){ makeEditable(t, function(v){ renameRxChannel(t,v); }); return; }
     }
 
-    // Subscriptions toggeln (nur wenn erlaubt)
     if(editSubsEnabled && t.dataset.role === "cell"){
-      // nur echte Kanal-Kombinationen erlauben
       if(!t.dataset.rxChanId || !t.dataset.txChanId) return;
-      toggleSubscription(t);
-      return;
+      toggleSubscription(t); return;
     }
   };
 }
@@ -427,7 +345,6 @@ function makeEditable(span, apply){
   }
   function onBlur(){ finish(); }
   function onKey(e){ if(e.key==="Enter"){ e.preventDefault(); span.blur(); } }
-
   span.addEventListener("blur", onBlur);
   span.addEventListener("keydown", onKey);
   span.focus();
@@ -446,7 +363,6 @@ function renameDevice(span, kind, newName){
   if(!nameEl){ nameEl = xmlDoc.createElement("name"); dev.el.insertBefore(nameEl, dev.el.firstChild); }
   nameEl.textContent = newName;
 
-  // nur wenn TX-Gerät umbenannt wird, müssen Subscriptions angepasst werden
   if(kind === "tx"){
     for(var i=0;i<rows.length;i++){
       var r = rows[i];
@@ -463,7 +379,6 @@ function renameDevice(span, kind, newName){
   renderMatrix();
   persist();
 }
-
 function renameTxChannel(span, newLabel){
   var di = parseInt(span.dataset.devIndex, 10);
   var cid = span.dataset.chanId || "";
@@ -480,7 +395,6 @@ function renameTxChannel(span, newLabel){
   labEl.textContent = newLabel;
   tx.label = newLabel;
 
-  // Subscriptions, die auf (dev.name, oldLabel) zeigen, auf neues Label umbiegen
   for(var r=0;r<rows.length;r++){
     var row = rows[r];
     if(row.rx.subDev === dev.name && row.rx.subChan === oldLabel){
@@ -494,7 +408,6 @@ function renameTxChannel(span, newLabel){
   renderMatrix();
   persist();
 }
-
 function renameRxChannel(span, newName){
   var di = parseInt(span.dataset.devIndex, 10);
   var cid = span.dataset.chanId || "";
@@ -542,8 +455,7 @@ function toggleSubscription(td){
     var sc2 = rx.el.querySelector("subscribed_channel");
     if(!sd2){ sd2 = xmlDoc.createElement("subscribed_device"); rx.el.appendChild(sd2); }
     if(!sc2){ sc2 = xmlDoc.createElement("subscribed_channel"); rx.el.appendChild(sc2); }
-    sd2.textContent = tdev.name;
-    sc2.textContent = tx.label;
+    sd2.textContent = tdev.name; sc2.textContent = tx.label;
     rx.subDev = tdev.name; rx.subChan = tx.label;
   }
 
@@ -551,14 +463,14 @@ function toggleSubscription(td){
   persist();
 }
 
-// --------- Persistenz ----------
+// --------- Persistenz (nur Session + window.name) ----------
 function persist(){
   try{
     var s = new XMLSerializer().serializeToString(xmlDoc);
-    // robust in alle Kanäle schreiben (Navigation ist sicher)
-    try { localStorage.setItem(LS_KEY, s); } catch(_) {}
-    try { sessionStorage.setItem(LS_KEY, s); } catch(_) {}
-    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: s }); } catch(_) {}
+    try { sessionStorage.setItem(SKEY_XML, s); } catch(_) {}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: s, ts: Date.now() }); } catch(_) {}
+    // Optional: wenn du dauerhaft sichern willst, zusätzlich localStorage:
+    // try { localStorage.setItem(SKEY_XML, s); } catch(_) {}
   }catch(e){
     var h = $("#hint"); if(h) h.textContent = "Persist-Fehler: " + (e.message || String(e));
   }
@@ -566,30 +478,16 @@ function persist(){
 
 // --------- UI Bindings ----------
 function bindUI(){
-  // Bearbeiten-Toggles
   var tSubs  = $("#toggleSubs");
   var tNames = $("#toggleNames");
-  if(tSubs){
-    tSubs.addEventListener("change", function(e){
-      editSubsEnabled = !!e.target.checked;
-      renderMatrix();
-    });
-  }
-  if(tNames){
-    tNames.addEventListener("change", function(e){
-      editNamesEnabled = !!e.target.checked;
-      renderMatrix();
-    });
-  }
+  if(tSubs){ tSubs.addEventListener("change", function(e){ editSubsEnabled = !!e.target.checked; renderMatrix(); }); }
+  if(tNames){ tNames.addEventListener("change", function(e){ editNamesEnabled = !!e.target.checked; renderMatrix(); }); }
 
-  // Filter live anwenden
   ["fTx","fRx"].forEach(function(id){
-    var el = $("#"+id);
-    if(!el) return;
+    var el = $("#"+id); if(!el) return;
     el.addEventListener("input", function(){ renderMatrix(); });
   });
 
-  // „Nur … mit Subs“: Beim Aktivieren aktuelle Sicht EINFRIEREN, beim Deaktivieren aufheben
   var chkRows = $("#onlyRowsWithSubs");
   var chkCols = $("#onlyColsWithSubs");
 
@@ -597,15 +495,9 @@ function bindUI(){
     chkRows.addEventListener("change", function(e){
       if(e.target.checked){
         var base = computeVisibleBase();
-        // auf Zeilen beschränken, die aktuell tatsächlich ein Abo haben (+ Device-Platzhalter)
-        base.visRows = base.visRows.filter(function(r){
-          if(r.isDevice) return true;
-          return !!(r.rx.subDev);
-        });
+        base.visRows = base.visRows.filter(function(r){ if(r.isDevice) return true; return !!(r.rx.subDev); });
         freezeVisible(base);
-      } else {
-        frozenRows = null;
-      }
+      } else { frozenRows = null; }
       renderMatrix();
     });
   }
@@ -614,7 +506,6 @@ function bindUI(){
     chkCols.addEventListener("change", function(e){
       if(e.target.checked){
         var base = computeVisibleBase();
-        // auf Spalten beschränken, die in den (nicht kollabierten) Zeilen zumindest einmal vorkommen
         var used = new Set();
         base.visRows.forEach(function(r){
           if(r.isDevice) return;
@@ -627,18 +518,13 @@ function bindUI(){
             }
           });
         });
-        base.visCols = base.visCols.filter(function(c){
-          return c.isDevice || used.has(colKey(c.devIndex, c.tx.id));
-        });
+        base.visCols = base.visCols.filter(function(c){ return c.isDevice || used.has(colKey(c.devIndex, c.tx.id)); });
         freezeVisible(base);
-      } else {
-        frozenCols = null;
-      }
+      } else { frozenCols = null; }
       renderMatrix();
     });
   }
 
-  // Speichern & zurück (Persist → zurück zur Übersicht)
   var back = $("#btnSaveBack");
   if(back){
     back.addEventListener("click", function(){

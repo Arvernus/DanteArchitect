@@ -3,6 +3,11 @@
 // ---- Config ----
 var HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan" };
 
+// ---- Storage Keys ----
+var SKEY_XML  = "DA_PRESET_XML";
+var SKEY_META = "DA_PRESET_META"; // { ts: <number> }
+function nowTs(){ return Date.now(); }
+
 // ---- State ----
 var lastXmlDoc = null;
 var helperState = "disconnected";   // "connected" | "connecting" | "disconnected"
@@ -99,61 +104,84 @@ function fillLibTable(){
   lib.forEach(function(m){ tbody.insertAdjacentHTML("beforeend", rowHtml([m.model, m.tx, m.rx])); });
 }
 
-// ---- Storage Helpers (NEU/zentral) ----
-function writePresetToStorage(xmlDocOrString){
-  var xml = (typeof xmlDocOrString === "string")
-    ? xmlDocOrString
-    : new XMLSerializer().serializeToString(xmlDocOrString);
-  try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-  try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
-}
-function readPresetFromAnyStorage(){
-  var xml = null;
-  try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
-  if(!xml){ try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
-  if(!xml && window.name){
-    try{
-      var payload = JSON.parse(window.name);
-      if(payload && payload.type === "DA_PRESET" && payload.xml){ xml = String(payload.xml); }
-    }catch(_){}
-  }
-  return xml;
+// ---- Storage Helpers (VERSIONIERT & streng Session-bezogen) ----
+function writePresetToSession(xmlString){
+  var ts = nowTs();
+  try { sessionStorage.setItem(SKEY_XML,  xmlString); } catch(_) {}
+  try { sessionStorage.setItem(SKEY_META, JSON.stringify({ ts: ts })); } catch(_) {}
+  // für Navigation zusätzlich window.name (gleicher Stand)
+  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xmlString, ts: ts }); } catch(_) {}
 }
 
-// ---- File handlers (sicher: Storage sofort neu befüllen) ----
-var fi = document.querySelector("#fileInput");
-if (fi) {
-  fi.addEventListener("change", function (e) {
-    try {
+function writePresetToLocal(xmlString){
+  var ts = nowTs();
+  try { localStorage.setItem(SKEY_XML,  xmlString); } catch(_) {}
+  try { localStorage.setItem(SKEY_META, JSON.stringify({ ts: ts })); } catch(_) {}
+}
+
+function readFromSession(){
+  var xml = null, meta = null;
+  try { xml  = sessionStorage.getItem(SKEY_XML); } catch(_) {}
+  try { meta = sessionStorage.getItem(SKEY_META); } catch(_) {}
+  return { xml: xml, meta: meta ? JSON.parse(meta) : null };
+}
+
+function readFromWindowName(){
+  if(!window.name) return { xml:null, meta:null };
+  try{
+    var payload = JSON.parse(window.name);
+    if(payload && payload.type === "DA_PRESET" && payload.xml){
+      return { xml: String(payload.xml), meta: payload.ts ? { ts: payload.ts } : null };
+    }
+  }catch(_){}
+  return { xml:null, meta:null };
+}
+
+// ---- Cold-Boot-Cleanup ----
+// Wenn wir die Startseite OHNE via-Hash öffnen ⇒ alte Session-Daten entfernen.
+// (localStorage bleibt unberührt, wird nicht autogeladen)
+(function coldBootCleanup(){
+  var via = (location.hash||"").indexOf("via=") >= 0;
+  if(!via){
+    try { sessionStorage.removeItem(SKEY_XML); } catch(_) {}
+    try { sessionStorage.removeItem(SKEY_META); } catch(_) {}
+    try { window.name = ""; } catch(_) {}
+  }
+})();
+
+// ---- File handlers (NEU: schreibt immer frischen Stand in Session + window.name + optional Local) ----
+var fi = $("#fileInput");
+if(fi){
+  fi.addEventListener("change", function(e){
+    try{
       var f = e.target && e.target.files ? e.target.files[0] : null;
-      if (!f) return;
+      if(!f) return;
       var reader = new FileReader();
-      reader.onload = function (ev) {
-        try {
+      reader.onload = function(ev){
+        try{
           var t = String(ev.target.result || "");
           var doc = parseXml(t);
 
-          // intern halten & anzeigen
+          // UI
           lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
 
-          // **WICHTIG**: JETZT sofort in alle Übergabekanäle schreiben
+          // Storage (Session + window.name; Local optional zum „manuellen“ Fortsetzen)
           var xml = new XMLSerializer().serializeToString(lastXmlDoc);
-          try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-          try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-          try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
+          writePresetToSession(xml);
+          // Optional: wenn du bewusst den letzten Stand über Browser-Neustarts erhalten willst:
+          // writePresetToLocal(xml);
 
           // Buttons freischalten
-          var bm = document.getElementById("btnMatrix"); if (bm) bm.disabled = false;
-          var be = document.getElementById("btnExport"); if (be) be.disabled = false;
+          var bm = $("#btnMatrix"); if (bm) bm.disabled = false;
+          var be = $("#btnExport"); if (be) be.disabled = false;
 
-        } catch (err) {
+        }catch(err){
           alert(err.message || String(err));
         }
       };
       reader.readAsText(f);
-    } catch (err) {
+    }catch(err){
       alert(err.message || String(err));
     }
   });
@@ -163,12 +191,10 @@ if (fi) {
 var be = $("#btnExport");
 if(be){
   be.addEventListener("click", function(){
-    // falls aus Storage statt live-Doc exportiert werden muss
+    // falls aus Session statt live-Doc exportiert werden muss
     if(!lastXmlDoc){
-      var xml = readPresetFromAnyStorage();
-      if(xml){
-        try { lastXmlDoc = parseXml(xml); } catch(_) {}
-      }
+      var ss = readFromSession();
+      if(ss.xml){ try { lastXmlDoc = parseXml(ss.xml); } catch(_) {} }
     }
     if(!lastXmlDoc){ alert("Bitte zuerst ein Preset laden."); return; }
     var content = serializeWithHeader(lastXmlDoc);
@@ -194,7 +220,6 @@ function ping(timeout){
     .catch(function(){ return false; })
     .finally(function(){ clearTimeout(to); endCheck(); });
 }
-
 function scan(timeout){
   if(typeof timeout!=="number") timeout=1200;
   beginCheck();
@@ -206,7 +231,6 @@ function scan(timeout){
     .catch(function(){ /* noop */ })
     .finally(function(){ clearTimeout(to); endCheck(); });
 }
-
 function scheduleRetry(){
   clearTimeout(timer);
   var jitter = Math.floor(Math.random()*0.25*backoff);
@@ -214,7 +238,6 @@ function scheduleRetry(){
   timer = setTimeout(connect, wait);
   backoff = Math.min(backoff*2, maxBackoff);
 }
-
 function connect(){
   setState("connecting", {announceWhenDone:false});
   ping(600).then(function(ok){
@@ -231,7 +254,6 @@ function connect(){
     }
   });
 }
-
 function loop(){
   if(helperState!=="connected") return;
   ping(600).then(function(ok){
@@ -243,7 +265,7 @@ function loop(){
   });
 }
 
-// Re-Checks bei Sichtbarkeitswechsel/Fokus/Netzwechsel
+// Re-Checks
 window.addEventListener("focus", function(){ if(helperState==="connected") scan(800); else connect(); }, {passive:true});
 document.addEventListener("visibilitychange", function(){
   if(document.visibilityState==="visible"){
@@ -256,60 +278,43 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
 
-// ---- Matrix-Button aktivieren & Navigation (immer frisch schreiben) ----
+// ---- Matrix-Button: immer frisch aus Session/lastXmlDoc schreiben ----
 (function () {
   var bm = document.getElementById("btnMatrix");
   if (!bm) return;
 
-  function readPresetFromAnyStorage(){
-    var xml = null;
-    try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
-    if (!xml) { try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
-    if (!xml && window.name) {
-      try {
-        var payload = JSON.parse(window.name);
-        if (payload && payload.type === "DA_PRESET" && payload.xml) xml = String(payload.xml);
-      } catch(_) {}
-    }
-    return xml;
+  function enableIfAvailable(){
+    var ss = readFromSession();
+    bm.disabled = !( (ss.xml && ss.xml.trim()) || lastXmlDoc );
   }
-
-  // beim Laden: Button aktivieren, wenn irgendwas da ist
-  bm.disabled = !readPresetFromAnyStorage() && !lastXmlDoc;
+  enableIfAvailable();
 
   bm.onclick = function () {
-    // 1) bevorzugt den aktuell im RAM gehaltenen Stand nehmen
     var xml = null;
     if (lastXmlDoc) {
       xml = new XMLSerializer().serializeToString(lastXmlDoc);
     } else {
-      // 2) ansonsten das, was schon im Storage liegt
-      xml = readPresetFromAnyStorage();
+      var ss = readFromSession();
+      xml = ss.xml || null;
     }
+    if (!xml) { alert("Kein Preset geladen."); return; }
 
-    if (!xml) {
-      alert("Kein Preset geladen.");
-      return;
-    }
-
-    // **Vor Navigation** sicher in alle Kanäle schreiben (überschreibt alte Stände)
-    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
-
-    // 3) navigieren
+    // FRISCH in Session & window.name schreiben und via-Hash setzen
+    writePresetToSession(xml);
     location.href = "./Matrix.html#via=btn";
   };
 })();
 
-// --- Safe Autoload: nur aus Storage, niemals Templates laden/erzeugen ---
-(function safeAutoloadFromStorage(){
+// --- Safe Autoload: nur Session, nur wenn via=matrix/btn, niemals aus Local automatisch ---
+(function safeAutoloadFromSession(){
   try {
+    var via = (location.hash||"").match(/via=(\w+)/);
+    if(!via){ return; } // nur wenn wir gezielt zurückkommen
     if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) return;
 
-    var xml = readPresetFromAnyStorage();
-    if (xml && xml.trim()) {
-      var doc = new DOMParser().parseFromString(xml, "application/xml");
+    var ss = readFromSession();
+    if (ss.xml && ss.xml.trim()) {
+      var doc = new DOMParser().parseFromString(ss.xml, "application/xml");
       var err = doc.querySelector("parsererror");
       if (!err) {
         lastXmlDoc = doc;
@@ -319,6 +324,6 @@ try { connect(); } catch(e) {}
       }
     }
   } catch (e) {
-    console.warn("safeAutoloadFromStorage skipped:", e);
+    console.warn("safeAutoloadFromSession skipped:", e);
   }
 })();
