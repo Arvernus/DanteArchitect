@@ -354,28 +354,46 @@ function makeEditable(span, apply){
 // --------- Umbenennungen ----------
 function renameDevice(span, kind, newName){
   var di = parseInt(span.dataset.devIndex, 10);
-  if(isNaN(di) || !devices[di]) return;
+  if (isNaN(di) || !devices[di]) return;
+
   var dev = devices[di];
-  var oldName = dev.name || "";
-  if(newName === oldName) return;
+  var oldName = (dev.name || "").trim();
+  newName = (newName || "").trim();
 
+  if (!newName || newName === oldName) return;
+
+  // 1) Device-Name im eigenen <device> aktualisieren
   var nameEl = dev.el.querySelector("name");
-  if(!nameEl){ nameEl = xmlDoc.createElement("name"); dev.el.insertBefore(nameEl, dev.el.firstChild); }
+  if (!nameEl) {
+    nameEl = xmlDoc.createElement("name");
+    dev.el.insertBefore(nameEl, dev.el.firstChild);
+  }
   nameEl.textContent = newName;
+  dev.name = newName;
 
-  if(kind === "tx"){
-    for(var i=0;i<rows.length;i++){
-      var r = rows[i];
-      if(r.rx.subDev === oldName){
-        var sd = r.rx.el.querySelector("subscribed_device");
-        if(!sd){ sd = xmlDoc.createElement("subscribed_device"); r.rx.el.appendChild(sd); }
-        sd.textContent = newName;
-        r.rx.subDev = newName;
+  // 2) ALLE Subscriptions im gesamten Preset anpassen:
+  //    überall dort, wo subscribed_device == alter Name, auf neuen Namen umbiegen
+  for (var r = 0; r < rows.length; r++) {
+    var rxrow = rows[r];
+    if ((rxrow.rx.subDev || "").trim() === oldName) {
+      // XML-Element holen/erzeugen
+      var sd = rxrow.rx.el.querySelector("subscribed_device");
+      if (!sd) {
+        sd = xmlDoc.createElement("subscribed_device");
+        rxrow.rx.el.appendChild(sd);
       }
+      sd.textContent = newName;
+
+      // Cache aktualisieren
+      rxrow.rx.subDev = newName;
     }
   }
 
-  dev.name = newName;
+  // Hinweis:
+  // - Es spielt keine Rolle, ob der Name in TX- oder RX-Header geändert wurde.
+  //   Wir sehen das Gerät "dev" als eine Entität und aktualisieren deshalb immer
+  //   alle Subscriptions, die auf den alten Namen zeigen.
+
   renderMatrix();
   persist();
 }
