@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified"
+           version="1.1">
+  <xs:complexType name="TxChannelType">
+    <xs:sequence>
+      <xs:element name="label" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="danteId" type="xs:positiveInteger" use="required"/>
+    <xs:attribute name="mediaType" type="xs:string" use="optional" default="audio"/>
+  </xs:complexType>
+  <xs:complexType name="RxChannelType">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string" minOccurs="0"/>
+      <xs:element name="subscribed_channel" type="xs:string" minOccurs="0"/>
+      <xs:element name="subscribed_device" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="danteId" type="xs:positiveInteger" use="required"/>
+    <xs:attribute name="mediaType" type="xs:string" use="optional" default="audio"/>
+  </xs:complexType>
+  <xs:complexType name="DeviceType">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="txchannel" type="TxChannelType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="rxchannel" type="RxChannelType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="PresetType">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="device" type="DeviceType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="xs:string" use="optional"/>
+  </xs:complexType>
+  <xs:element name="preset" type="PresetType"/>
+</xs:schema>

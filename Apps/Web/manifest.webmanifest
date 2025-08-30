@@ -1,0 +1,7 @@
+{
+  "name": "Dante Architect",
+  "short_name": "DanteArch",
+  "display": "standalone",
+  "start_url": "./Index.html",
+  "icons": []
+}

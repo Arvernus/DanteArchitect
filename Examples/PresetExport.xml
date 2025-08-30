@@ -1,12 +1,33 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <preset version="2.1.0">
     <name>2025-05-15_DanteSetup_Hof_IliveDanteExtender_LR_Mon1-7</name>
     <description>Dante Controller preset</description>
     <device>
         <name>AllenHth-Dante-Karte-IliveIo</name>
-        <friendly_name>AllenHth-Dante-Karte-IliveIo</friendly_name>
+        <default_name>AllenHth-0b0ad2</default_name>
+        <instance_id>
+            <device_id>001DC10B0AD20000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>416C6C656E487468</manufacturer_id>
         <manufacturer_name>AllenHeath</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>Dante Option Card</model_name>
+        <model_version>4.0.4</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>AllenHth-Dante-Karte-IliveIo</friendly_name>
+        <preferred_master value="false" />
+        <external_word_clock value="false" />
+        <switch_vlan value="1" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <txchannel danteId="1" mediaType="audio">
             <label>Ilive In A1</label>
         </txchannel>
@@ -394,9 +415,27 @@
     </device>
     <device>
         <name>KS-CPD10-1006392-Delay-L</name>
-        <friendly_name>KS-CPD10-1006392-Delay-L</friendly_name>
+        <default_name>KS-CPD-124fc0</default_name>
+        <instance_id>
+            <device_id>001DC1124FC00000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>696E6E6F736F6E69</manufacturer_id>
         <manufacturer_name>innosonix</manufacturer_name>
+        <model_id>00000000004B5301</model_id>
         <model_name>KS CPD</model_name>
+        <model_version>1.3.0</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-CPD10-1006392-Delay-L</friendly_name>
+        <redundancy value="false" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <encoding>24</encoding>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>01</name>
             <subscribed_channel>Ilive In A2</subscribed_channel>
@@ -408,9 +447,26 @@
     </device>
     <device>
         <name>KS-CPD10-9479--2-Delay-X</name>
-        <friendly_name>KS-CPD10-9479--2-Delay-X</friendly_name>
+        <default_name>KS-CPD-0f6986</default_name>
+        <instance_id>
+            <device_id>001DC10F69860000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000002</model_id>
         <model_name>KS CPD</model_name>
+        <model_version>1.0.0</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-CPD10-9479--2-Delay-X</friendly_name>
+        <redundancy value="false" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>Ch 1</name>
             <subscribed_channel>Ilive In A1</subscribed_channel>
@@ -422,9 +478,29 @@
     </device>
     <device>
         <name>KS-FMOD-5001495-Amp2-4</name>
-        <friendly_name>KS-FMOD-5001495-Amp2-4</friendly_name>
+        <default_name>KS-FMOD-124fb4</default_name>
+        <instance_id>
+            <device_id>001DC1124FB40000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.2.2</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-5001495-Amp2-4</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>T Sub B L</name>
             <subscribed_channel>Ilive In A1</subscribed_channel>
@@ -444,9 +520,29 @@
     </device>
     <device>
         <name>KS-FMOD-5001501-Mon5-7</name>
-        <friendly_name>KS-FMOD-5001501-Mon5-7</friendly_name>
+        <default_name>KS-FMOD-0f69bc</default_name>
+        <instance_id>
+            <device_id>001DC10F69BC0000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.2.2</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-5001501-Mon5-7</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>Mon 5</name>
             <subscribed_channel>Ilive In A7</subscribed_channel>
@@ -468,9 +564,29 @@
     </device>
     <device>
         <name>KS-FMOD-9732--1Amp2-1</name>
-        <friendly_name>KS-FMOD-9732--1Amp2-1</friendly_name>
+        <default_name>KS-FMOD-0f697e</default_name>
+        <instance_id>
+            <device_id>001DC10F697E0000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.2.2</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-9732--1Amp2-1</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>Far L</name>
             <subscribed_channel>Ilive In A1</subscribed_channel>
@@ -490,9 +606,25 @@
     </device>
     <device>
         <name>KS-FMOD-9732--4-Mon1-4</name>
-        <friendly_name>KS-FMOD-9732--4-Mon1-4</friendly_name>
+        <default_name>KS-FMOD-0dda98</default_name>
+        <instance_id>
+            <device_id>001DC10DDA980000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.0.0</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-9732--4-Mon1-4</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0" />
+        <interface network="1" />
         <rxchannel danteId="1" mediaType="audio">
             <name>Mon 1</name>
             <subscribed_channel>Ilive In A3</subscribed_channel>
@@ -516,9 +648,29 @@
     </device>
     <device>
         <name>KS-FMOD-9732--5-Amp2-3</name>
-        <friendly_name>KS-FMOD-9732--5-Amp2-3</friendly_name>
+        <default_name>KS-FMOD-0ddad6</default_name>
+        <instance_id>
+            <device_id>001DC10DDAD60000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.2.2</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-9732--5-Amp2-3</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>Outfill L</name>
             <subscribed_channel>Ilive In A1</subscribed_channel>
@@ -538,9 +690,29 @@
     </device>
     <device>
         <name>KS-FMOD-9732--8-Amp2-2</name>
-        <friendly_name>KS-FMOD-9732--8-Amp2-2</friendly_name>
+        <default_name>KS-FMOD-0ddaae</default_name>
+        <instance_id>
+            <device_id>001DC10DDAAE0000</device_id>
+            <process_id>0</process_id>
+        </instance_id>
+        <manufacturer_id>417564696E617466</manufacturer_id>
         <manufacturer_name>KS</manufacturer_name>
+        <model_id>0000000000000001</model_id>
         <model_name>KS FMOD</model_name>
+        <model_version>1.2.2</model_version>
+        <device_type>426B6C796E320000</device_type>
+        <device_type_string>Brooklyn II</device_type_string>
+        <friendly_name>KS-FMOD-9732--8-Amp2-2</friendly_name>
+        <redundancy value="true" />
+        <preferred_master value="false" />
+        <samplerate>48000</samplerate>
+        <unicast_latency>1000</unicast_latency>
+        <interface network="0">
+            <ipv4_address mode="dynamic" />
+        </interface>
+        <interface network="1">
+            <ipv4_address mode="dynamic" />
+        </interface>
         <rxchannel danteId="1" mediaType="audio">
             <name>Near L</name>
             <subscribed_channel>Ilive In A1</subscribed_channel>
