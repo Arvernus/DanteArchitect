@@ -1,3 +1,5 @@
+// Apps/Web/Script.js
+
 // ---- Config ----
 var HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan" };
 
@@ -55,22 +57,6 @@ function serializeWithHeader(xml){
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
 }
 
-function stashPresetForNavigation(xmlDocOrString){
-  try{
-    var xml = (typeof xmlDocOrString === "string")
-      ? xmlDocOrString
-      : new XMLSerializer().serializeToString(xmlDocOrString);
-
-    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
-    return true;
-  }catch(e){
-    console.warn("stashPresetForNavigation failed:", e);
-    return false;
-  }
-}
-
 // ---- Tables ----
 function fillPresetTable(xml){
   var tbody = $("#presetTable tbody"); if(!tbody) return;
@@ -113,38 +99,58 @@ function fillLibTable(){
   lib.forEach(function(m){ tbody.insertAdjacentHTML("beforeend", rowHtml([m.model, m.tx, m.rx])); });
 }
 
-// ---- File handlers ----
-var fi = document.getElementById("fileInput");
-if (fi) {
-  fi.addEventListener("change", function (e) {
-    try {
+// ---- Navigation Helpers (Fix 1) ----
+function stashPresetForNavigation(xmlDocOrString){
+  try{
+    var xml = (typeof xmlDocOrString === "string")
+      ? xmlDocOrString
+      : new XMLSerializer().serializeToString(xmlDocOrString);
+
+    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
+    return true;
+  }catch(e){
+    console.warn("stashPresetForNavigation failed:", e);
+    return false;
+  }
+}
+
+// ---- File handlers (Fix 2 integriert) ----
+var fi = $("#fileInput");
+if(fi){
+  fi.addEventListener("change", function(e){
+    try{
       var f = e.target && e.target.files ? e.target.files[0] : null;
-      if (!f) return;
+      if(!f) return;
       var reader = new FileReader();
-      reader.onload = function (ev) {
-        try {
+      reader.onload = function(ev){
+        try{
           var t = String(ev.target.result || "");
-          var doc = new DOMParser().parseFromString(t, "application/xml");
-          var err = doc.querySelector("parsererror");
-          if (err) throw new Error("XML Parser Error: " + err.textContent);
+          var doc = parseXml(t);
 
           // intern halten & anzeigen
           lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
 
-          // robust ablegen für Matrix-Navigation
+          // robust ablegen für Matrix-Navigation (LS + SS + window.name)
           stashPresetForNavigation(lastXmlDoc);
 
           // Matrix-Button aktivieren
-          var bm = document.getElementById("btnMatrix");
-          if (bm) { bm.disabled = false; }
-        } catch (err) { alert(err.message || String(err)); }
+          var bm = $("#btnMatrix");
+          if (bm) bm.disabled = false;
+        }catch(err){
+          alert(err.message || String(err));
+        }
       };
       reader.readAsText(f);
-    } catch (err) { alert(err.message || String(err)); }
+    }catch(err){
+      alert(err.message || String(err));
+    }
   });
 }
 
+// ---- Export ----
 var be = $("#btnExport");
 if(be){
   be.addEventListener("click", function(){
@@ -233,47 +239,13 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 // ---- Init ----
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
-// Matrix-Button initial aktivieren, wenn schon ein Preset im Speicher liegt
+
+// ---- Matrix-Button aktivieren & Navigation (Fix 3) ----
 (function () {
   var bm = document.getElementById("btnMatrix");
   if (!bm) return;
 
-  function getSerializedXml() {
-    try {
-      // 1) bevorzugt: frisch aus lastXmlDoc
-      if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) {
-        return new XMLSerializer().serializeToString(lastXmlDoc);
-      }
-      // 2) fallback: aus localStorage (falls vorhanden)
-      var s = localStorage.getItem("DA_PRESET_XML");
-      return s || "";
-    } catch (_) { return ""; }
-  }
-
-  // Button ist aktiv, wenn irgendeine Quelle da ist
-  bm.disabled = !getSerializedXml();
-
-  bm.onclick = function () {
-    var xml = getSerializedXml();
-    if (!xml) { alert("Kein Preset geladen."); return; }
-
-    // WICHTIG: XML tab-weit mitgeben
-    // window.name ist pro Tab persistent (auch über Navigations hinweg)
-    window.name = JSON.stringify({ type: "DA_PRESET", xml: xml });
-
-    // optional zusätzlich in localStorage schreiben (falls erlaubt)
-    try { localStorage.setItem("DA_PRESET_XML", xml); } catch (_) {}
-
-    // navigieren
-    location.href = "./Matrix.html#via=windowname";
-  };
-};
-
-(function () {
-  var bm = document.getElementById("btnMatrix");
-  if (!bm) return;
-
-  // prüfen, ob schon ein Preset existiert
+  // prüfen, ob schon ein Preset irgendwo existiert
   var hasAny = false;
   try {
     hasAny = !!(
@@ -286,13 +258,18 @@ try { connect(); } catch(e) {}
   bm.disabled = !hasAny;
 
   bm.onclick = function () {
+    // vor Navigation sicherstellen, dass ein Preset hinterlegt ist
+    if (lastXmlDoc) {
+      stashPresetForNavigation(lastXmlDoc);
+      location.href = "./Matrix.html#via=stash";
+      return;
+    }
     if (
-      lastXmlDoc ||
       localStorage.getItem("DA_PRESET_XML") ||
       sessionStorage.getItem("DA_PRESET_XML") ||
       window.name
     ) {
-      if (lastXmlDoc) stashPresetForNavigation(lastXmlDoc);
+      // bereits vorhanden – navigieren
       location.href = "./Matrix.html#via=stash";
     } else {
       alert("Kein Preset geladen.");
