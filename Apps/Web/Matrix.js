@@ -20,48 +20,69 @@ function norm(s){ return (s||"").toLowerCase(); }
 // --------- Init ----------
 (function init(){
   try{
-    var xml = null;
+    var xml = null, source = "none";
 
-    // 1) zuerst localStorage probieren
-    try { xml = localStorage.getItem(LS_KEY); } catch (_) { xml = null; }
+    // 1) zuerst localStorage
+    try {
+      xml = localStorage.getItem("DA_PRESET_XML");
+      if (xml && xml.trim()) source = "localStorage";
+    } catch(_) { xml = null; }
 
-    // 2) wenn leer: window.name verwenden (vom Index gesetzt)
-    if (!xml || !xml.trim()) {
+    // 2) dann sessionStorage
+    if (!xml || !xml.trim()){
       try {
-        if (window.name) {
-          var payload = null;
-          try { payload = JSON.parse(window.name); } catch (_) {}
-          if (payload && payload.type === "DA_PRESET" && payload.xml) {
-            xml = String(payload.xml);
-            // zurück in localStorage legen (falls wieder verfügbar)
-            try { localStorage.setItem(LS_KEY, xml); } catch (_) {}
-          }
-        }
-      } catch (_) {}
+        xml = sessionStorage.getItem("DA_PRESET_XML");
+        if (xml && xml.trim()) source = "sessionStorage";
+      } catch(_) { xml = null; }
     }
 
-    if (!xml) {
-      var hint = $("#hint");
+    // 3) dann window.name (vom Index gesetzt)
+    if (!xml || !xml.trim()){
+      try{
+        if (window.name) {
+          var payload = null;
+          try { payload = JSON.parse(window.name); } catch(_) {}
+          if (payload && payload.type === "DA_PRESET" && payload.xml) {
+            xml = String(payload.xml);
+            source = "window.name";
+            // best effort zurückschreiben
+            try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+            try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+          }
+        }
+      }catch(_){ xml = null; }
+    }
+
+    if (!xml || !xml.trim()){
+      var hint = document.getElementById("hint");
       if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zur Übersicht zurück und Preset laden.";
+      console.warn("Matrix init: no XML found in any source.");
       return;
     }
 
+    console.info("Matrix init: XML loaded from", source);
+
+    // XML parsen
     var p = new DOMParser();
     xmlDoc = p.parseFromString(xml, "application/xml");
     var err = xmlDoc.querySelector("parsererror");
     if(err){
-      var hi = $("#hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
+      var hi = document.getElementById("hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
       return;
     }
 
+    // Preset-Name in Chip
     var pname = xmlDoc.querySelector("preset > name");
-    if(pname && $("#presetNameChip")) $("#presetNameChip").textContent = "Preset: " + pname.textContent;
+    var chip = document.getElementById("presetNameChip");
+    if(pname && chip) chip.textContent = "Preset: " + pname.textContent;
 
     buildModel();
     renderMatrix();
     bindUI();
   }catch(e){
-    var h = $("#hint"); if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
+    var h = document.getElementById("hint");
+    if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
+    console.error("Matrix init error:", e);
   }
 })();
 

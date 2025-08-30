@@ -55,6 +55,22 @@ function serializeWithHeader(xml){
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
 }
 
+function stashPresetForNavigation(xmlDocOrString){
+  try{
+    var xml = (typeof xmlDocOrString === "string")
+      ? xmlDocOrString
+      : new XMLSerializer().serializeToString(xmlDocOrString);
+
+    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
+    return true;
+  }catch(e){
+    console.warn("stashPresetForNavigation failed:", e);
+    return false;
+  }
+}
+
 // ---- Tables ----
 function fillPresetTable(xml){
   var tbody = $("#presetTable tbody"); if(!tbody) return;
@@ -111,12 +127,14 @@ if (fi) {
           var doc = new DOMParser().parseFromString(t, "application/xml");
           var err = doc.querySelector("parsererror");
           if (err) throw new Error("XML Parser Error: " + err.textContent);
-          // intern halten
+
+          // intern halten & anzeigen
           lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
-          // **WICHTIG**: sauber serialisieren und im localStorage ablegen (Matrix liest von dort)
-          var serialized = new XMLSerializer().serializeToString(lastXmlDoc);
-          localStorage.setItem("DA_PRESET_XML", serialized);
+
+          // robust ablegen für Matrix-Navigation
+          stashPresetForNavigation(lastXmlDoc);
+
           // Matrix-Button aktivieren
           var bm = document.getElementById("btnMatrix");
           if (bm) { bm.disabled = false; }
@@ -248,5 +266,35 @@ try { connect(); } catch(e) {}
 
     // navigieren
     location.href = "./Matrix.html#via=windowname";
+  };
+
+(function () {
+  var bm = document.getElementById("btnMatrix");
+  if (!bm) return;
+
+  // prüfen, ob schon ein Preset existiert
+  var hasAny = false;
+  try {
+    hasAny = !!(
+      localStorage.getItem("DA_PRESET_XML") ||
+      sessionStorage.getItem("DA_PRESET_XML") ||
+      window.name
+    );
+  } catch (_) {}
+
+  bm.disabled = !hasAny;
+
+  bm.onclick = function () {
+    if (
+      lastXmlDoc ||
+      localStorage.getItem("DA_PRESET_XML") ||
+      sessionStorage.getItem("DA_PRESET_XML") ||
+      window.name
+    ) {
+      if (lastXmlDoc) stashPresetForNavigation(lastXmlDoc);
+      location.href = "./Matrix.html#via=stash";
+    } else {
+      alert("Kein Preset geladen.");
+    }
   };
 })();
