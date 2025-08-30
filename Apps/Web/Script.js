@@ -99,24 +99,29 @@ function fillLibTable(){
   lib.forEach(function(m){ tbody.insertAdjacentHTML("beforeend", rowHtml([m.model, m.tx, m.rx])); });
 }
 
-// ---- Navigation Helpers (Fix 1) ----
-function stashPresetForNavigation(xmlDocOrString){
-  try{
-    var xml = (typeof xmlDocOrString === "string")
-      ? xmlDocOrString
-      : new XMLSerializer().serializeToString(xmlDocOrString);
-
-    try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
-    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
-    return true;
-  }catch(e){
-    console.warn("stashPresetForNavigation failed:", e);
-    return false;
+// ---- Storage Helpers (NEU/zentral) ----
+function writePresetToStorage(xmlDocOrString){
+  var xml = (typeof xmlDocOrString === "string")
+    ? xmlDocOrString
+    : new XMLSerializer().serializeToString(xmlDocOrString);
+  try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+  try { localStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml }); } catch(_) {}
+}
+function readPresetFromAnyStorage(){
+  var xml = null;
+  try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
+  if(!xml){ try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
+  if(!xml && window.name){
+    try{
+      var payload = JSON.parse(window.name);
+      if(payload && payload.type === "DA_PRESET" && payload.xml){ xml = String(payload.xml); }
+    }catch(_){}
   }
+  return xml;
 }
 
-// ---- File handlers (Fix 2 integriert) ----
+// ---- File handlers (FIX: Storage wird beim Laden sicher neu befüllt) ----
 var fi = $("#fileInput");
 if(fi){
   fi.addEventListener("change", function(e){
@@ -133,12 +138,14 @@ if(fi){
           lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
 
-          // robust ablegen für Matrix-Navigation (LS + SS + window.name)
-          stashPresetForNavigation(lastXmlDoc);
+          // **WICHTIG**: Storage JETZT neu schreiben (SS + LS + window.name)
+          writePresetToStorage(lastXmlDoc);
 
           // Matrix-Button aktivieren
           var bm = $("#btnMatrix");
           if (bm) bm.disabled = false;
+          var be = $("#btnExport");
+          if (be) be.disabled = false;
         }catch(err){
           alert(err.message || String(err));
         }
@@ -154,6 +161,13 @@ if(fi){
 var be = $("#btnExport");
 if(be){
   be.addEventListener("click", function(){
+    // falls aus Storage statt live-Doc exportiert werden muss
+    if(!lastXmlDoc){
+      var xml = readPresetFromAnyStorage();
+      if(xml){
+        try { lastXmlDoc = parseXml(xml); } catch(_) {}
+      }
+    }
     if(!lastXmlDoc){ alert("Bitte zuerst ein Preset laden."); return; }
     var content = serializeWithHeader(lastXmlDoc);
     var blob = new Blob([content], {type:"application/xml"});
@@ -240,71 +254,34 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
 
-// ---- Matrix-Button aktivieren & Navigation (Fix 3) ----
+// ---- Matrix-Button aktivieren & Navigation ----
 (function () {
   var bm = document.getElementById("btnMatrix");
   if (!bm) return;
 
   // prüfen, ob schon ein Preset irgendwo existiert
-  var hasAny = false;
-  try {
-    hasAny = !!(
-      localStorage.getItem("DA_PRESET_XML") ||
-      sessionStorage.getItem("DA_PRESET_XML") ||
-      window.name
-    );
-  } catch (_) {}
-
+  var hasAny = !!readPresetFromAnyStorage();
   bm.disabled = !hasAny;
 
   bm.onclick = function () {
-    // vor Navigation sicherstellen, dass ein Preset hinterlegt ist
-    if (lastXmlDoc) {
-      stashPresetForNavigation(lastXmlDoc);
-      location.href = "./Matrix.html#via=stash";
-      return;
-    }
-    if (
-      localStorage.getItem("DA_PRESET_XML") ||
-      sessionStorage.getItem("DA_PRESET_XML") ||
-      window.name
-    ) {
-      // bereits vorhanden – navigieren
-      location.href = "./Matrix.html#via=stash";
-    } else {
-      alert("Kein Preset geladen.");
-    }
+    // falls zuletzt nur aus Storage gearbeitet wurde, nichts weiter tun
+    if (lastXmlDoc) writePresetToStorage(lastXmlDoc);
+    location.href = "./Matrix.html#via=stash";
   };
 })();
 
 // --- Safe Autoload: nur aus Storage, niemals Templates laden/erzeugen ---
 (function safeAutoloadFromStorage(){
   try {
-    // Wenn bereits ein lastXmlDoc existiert (z. B. gerade Datei geladen), nichts tun
     if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) return;
 
-    // Reihenfolge: sessionStorage → localStorage → window.name (nur wenn type=DA_PRESET)
-    var xml = null;
-
-    try { xml = sessionStorage.getItem("DA_PRESET_XML"); } catch(_) {}
-    if (!xml) { try { xml = localStorage.getItem("DA_PRESET_XML"); } catch(_) {} }
-    if (!xml && window.name) {
-      try {
-        var payload = JSON.parse(window.name);
-        if (payload && payload.type === "DA_PRESET" && payload.xml) {
-          xml = String(payload.xml);
-        }
-      } catch(_) {}
-    }
-
-    // NUR wenn wir wirklich XML aus Storage haben → anzeigen; KEINE Templates/Defaults bauen!
+    var xml = readPresetFromAnyStorage();
     if (xml && xml.trim()) {
       var doc = new DOMParser().parseFromString(xml, "application/xml");
       var err = doc.querySelector("parsererror");
       if (!err) {
         lastXmlDoc = doc;
-        // UI aus vorhandenem Preset aktualisieren
-        if (typeof fillPresetTable === "function") fillPresetTable(lastXmlDoc);
+        fillPresetTable(lastXmlDoc);
         var bm = document.getElementById("btnMatrix"); if (bm) bm.disabled = false;
         var be = document.getElementById("btnExport"); if (be) be.disabled = false;
       }
