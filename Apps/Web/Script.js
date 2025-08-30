@@ -219,6 +219,34 @@ try { connect(); } catch(e) {}
 (function () {
   var bm = document.getElementById("btnMatrix");
   if (!bm) return;
-  bm.disabled = !localStorage.getItem("DA_PRESET_XML");
-  bm.onclick = function(){ location.href = "./Matrix.html"; };
+
+  function getSerializedXml() {
+    try {
+      // 1) bevorzugt: frisch aus lastXmlDoc
+      if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) {
+        return new XMLSerializer().serializeToString(lastXmlDoc);
+      }
+      // 2) fallback: aus localStorage (falls vorhanden)
+      var s = localStorage.getItem("DA_PRESET_XML");
+      return s || "";
+    } catch (_) { return ""; }
+  }
+
+  // Button ist aktiv, wenn irgendeine Quelle da ist
+  bm.disabled = !getSerializedXml();
+
+  bm.onclick = function () {
+    var xml = getSerializedXml();
+    if (!xml) { alert("Kein Preset geladen."); return; }
+
+    // WICHTIG: XML tab-weit mitgeben
+    // window.name ist pro Tab persistent (auch über Navigations hinweg)
+    window.name = JSON.stringify({ type: "DA_PRESET", xml: xml });
+
+    // optional zusätzlich in localStorage schreiben (falls erlaubt)
+    try { localStorage.setItem("DA_PRESET_XML", xml); } catch (_) {}
+
+    // navigieren
+    location.href = "./Matrix.html#via=windowname";
+  };
 })();

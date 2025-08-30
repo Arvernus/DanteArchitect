@@ -20,12 +20,32 @@ function norm(s){ return (s||"").toLowerCase(); }
 // --------- Init ----------
 (function init(){
   try{
-    var xml = localStorage.getItem(LS_KEY);
-    if(!xml){
+    var xml = null;
+
+    // 1) zuerst localStorage probieren
+    try { xml = localStorage.getItem(LS_KEY); } catch (_) { xml = null; }
+
+    // 2) wenn leer: window.name verwenden (vom Index gesetzt)
+    if (!xml || !xml.trim()) {
+      try {
+        if (window.name) {
+          var payload = null;
+          try { payload = JSON.parse(window.name); } catch (_) {}
+          if (payload && payload.type === "DA_PRESET" && payload.xml) {
+            xml = String(payload.xml);
+            // zurück in localStorage legen (falls wieder verfügbar)
+            try { localStorage.setItem(LS_KEY, xml); } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!xml) {
       var hint = $("#hint");
-      if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset im Speicher.</span> Kehre zur Übersicht zurück und lade ein Preset.";
+      if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zur Übersicht zurück und Preset laden.";
       return;
     }
+
     var p = new DOMParser();
     xmlDoc = p.parseFromString(xml, "application/xml");
     var err = xmlDoc.querySelector("parsererror");
@@ -34,7 +54,6 @@ function norm(s){ return (s||"").toLowerCase(); }
       return;
     }
 
-    // Preset-Name in Chip
     var pname = xmlDoc.querySelector("preset > name");
     if(pname && $("#presetNameChip")) $("#presetNameChip").textContent = "Preset: " + pname.textContent;
 
