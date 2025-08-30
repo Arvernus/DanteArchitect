@@ -98,28 +98,32 @@ function fillLibTable(){
 }
 
 // ---- File handlers ----
-var fi = $("#fileInput");
-if(fi){
-  fi.addEventListener("change", function(e){
-    try{
+var fi = document.getElementById("fileInput");
+if (fi) {
+  fi.addEventListener("change", function (e) {
+    try {
       var f = e.target && e.target.files ? e.target.files[0] : null;
-      if(!f) return;
+      if (!f) return;
       var reader = new FileReader();
-      reader.onload = function(ev){
-        try{
+      reader.onload = function (ev) {
+        try {
           var t = String(ev.target.result || "");
-          lastXmlDoc = parseXml(t);
-          localStorage.setItem("DA_PRESET_XML", t);
-          var bm = document.getElementById("btnMatrix"); if(bm) bm.disabled = false;
+          var doc = new DOMParser().parseFromString(t, "application/xml");
+          var err = doc.querySelector("parsererror");
+          if (err) throw new Error("XML Parser Error: " + err.textContent);
+          // intern halten
+          lastXmlDoc = doc;
           fillPresetTable(lastXmlDoc);
-        }catch(err){
-          alert(err.message || String(err));
-        }
+          // **WICHTIG**: sauber serialisieren und im localStorage ablegen (Matrix liest von dort)
+          var serialized = new XMLSerializer().serializeToString(lastXmlDoc);
+          localStorage.setItem("DA_PRESET_XML", serialized);
+          // Matrix-Button aktivieren
+          var bm = document.getElementById("btnMatrix");
+          if (bm) { bm.disabled = false; }
+        } catch (err) { alert(err.message || String(err)); }
       };
       reader.readAsText(f);
-    }catch(err){
-      alert(err.message || String(err));
-    }
+    } catch (err) { alert(err.message || String(err)); }
   });
 }
 
@@ -211,5 +215,10 @@ window.addEventListener("online", function(){ connect(); }, {passive:true});
 // ---- Init ----
 try { fillLibTable(); } catch(e) {}
 try { connect(); } catch(e) {}
-var bm = document.getElementById("btnMatrix");
-if(bm){ bm.disabled = !localStorage.getItem("DA_PRESET_XML"); bm.onclick = function(){ location.href = "./Matrix.html"; }; }
+// Matrix-Button initial aktivieren, wenn schon ein Preset im Speicher liegt
+(function () {
+  var bm = document.getElementById("btnMatrix");
+  if (!bm) return;
+  bm.disabled = !localStorage.getItem("DA_PRESET_XML");
+  bm.onclick = function(){ location.href = "./Matrix.html"; };
+})();

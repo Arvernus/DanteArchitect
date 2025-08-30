@@ -1,38 +1,52 @@
-// Key für LocalStorage
-var LS_KEY = "DA_PRESET_XML";
+// Apps/Web/Matrix.js
 
-// Working state
+// --------- Konstanten / Storage-Key ----------
+var LS_KEY = "DA_PRESET_XML"; // Startseite legt hier das geladene Preset ab
+
+// --------- Working State ----------
 var xmlDoc = null;
 var devices = [];   // {name, el, tx:[{el,label,id}], rx:[{el,name,id,subDev,subChan}]}
-var cols = [];      // flache Liste aller TX-Spalten in Render-Reihenfolge
-var rows = [];      // flache Liste aller RX-Reihen in Render-Reihenfolge
-var editEnabled = false;
+var cols = [];      // flache Liste aller TX-Spalten (mit Geräte-Ref)
+var rows = [];      // flache Liste aller RX-Reihen (mit Geräte-Ref)
 
+var editEnabled = false;   // Freigabe AN/AUS
+var editMode = "subs";     // "subs" | "names"
+
+// --------- Helpers ----------
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
 function norm(s){ return (s||"").toLowerCase(); }
 
-// ---------- Load ----------
+// --------- Init ----------
 (function init(){
-  var xml = localStorage.getItem(LS_KEY);
-  if(!xml){
-    $("#hint").innerHTML = "⚠️ <span class='warn'>Kein Preset im Speicher.</span> Geh zurück zur Übersicht und lade ein Preset.";
-    return;
+  try{
+    var xml = localStorage.getItem(LS_KEY);
+    if(!xml){
+      var hint = $("#hint");
+      if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset im Speicher.</span> Kehre zur Übersicht zurück und lade ein Preset.";
+      return;
+    }
+    var p = new DOMParser();
+    xmlDoc = p.parseFromString(xml, "application/xml");
+    var err = xmlDoc.querySelector("parsererror");
+    if(err){
+      var hi = $("#hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
+      return;
+    }
+
+    // Preset-Name in Chip
+    var pname = xmlDoc.querySelector("preset > name");
+    if(pname && $("#presetNameChip")) $("#presetNameChip").textContent = "Preset: " + pname.textContent;
+
+    buildModel();
+    renderMatrix();
+    bindUI();
+  }catch(e){
+    var h = $("#hint"); if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
   }
-  var p = new DOMParser();
-  xmlDoc = p.parseFromString(xml, "application/xml");
-  var err = xmlDoc.querySelector("parsererror");
-  if(err){ $("#hint").textContent="XML Fehler: " + err.textContent; return; }
-
-  // Name für Chip
-  var pname = xmlDoc.querySelector("preset > name");
-  if(pname) $("#presetNameChip").textContent = "Preset: " + pname.textContent;
-
-  buildModel();
-  renderMatrix();
-  bindUI();
 })();
 
+// --------- Model-Aufbau ----------
 function buildModel(){
   devices = [];
   cols = [];
@@ -41,9 +55,10 @@ function buildModel(){
   var devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("preset > device"));
   if(devEls.length === 0) devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("device"));
 
-  // Collect devices with tx/rx
   devEls.forEach(function(de){
-    var name = (de.querySelector("name") && de.querySelector("name").textContent) ? de.querySelector("name").textContent.trim() : "";
+    var nEl = de.querySelector("name");
+    var name = nEl && nEl.textContent ? nEl.textContent.trim() : "";
+
     var txEls = Array.prototype.slice.call(de.querySelectorAll("txchannel"));
     var rxEls = Array.prototype.slice.call(de.querySelectorAll("rxchannel"));
 
@@ -55,13 +70,15 @@ function buildModel(){
     });
 
     var rx = rxEls.map(function(rxel){
-      var nEl = rxel.querySelector("name");
-      var name = nEl && nEl.textContent ? nEl.textContent.trim() : "";
+      var nEl2 = rxel.querySelector("name");
+      var rname = nEl2 && nEl2.textContent ? nEl2.textContent.trim() : "";
       var id = rxel.getAttribute("danteId") || "";
       var sd = rxel.querySelector("subscribed_device");
       var sc = rxel.querySelector("subscribed_channel");
       return {
-        el: rxel, name: name, id: id,
+        el: rxel,
+        name: rname,
+        id: id,
         subDev: sd && sd.textContent ? sd.textContent.trim() : "",
         subChan: sc && sc.textContent ? sc.textContent.trim() : ""
       };
@@ -70,14 +87,11 @@ function buildModel(){
     devices.push({ name: name, el: de, tx: tx, rx: rx });
   });
 
-  // columns = all tx channels, with device boundary
   devices.forEach(function(d){
     d.tx.forEach(function(tx){
-      cols.push({ dev:d, tx:tx }); // keep refs
+      cols.push({ dev:d, tx:tx });
     });
   });
-
-  // rows = all rx channels
   devices.forEach(function(d){
     d.rx.forEach(function(rx){
       rows.push({ dev:d, rx:rx });
@@ -85,36 +99,53 @@ function buildModel(){
   });
 }
 
-// ---------- Render ----------
+// --------- Render ----------
 function renderMatrix(){
-  var thead = $("#thead"); var tbody = $("#tbody");
-  thead.innerHTML=""; tbody.innerHTML="";
+  var thead = $("#thead"), tbody = $("#tbody");
+  if(!thead || !tbody) return;
+  thead.innerHTML = "";
+  tbody.innerHTML  = "";
 
-  // Filters
-  var ftDev = norm($("#fTxDev").value);
-  var ftChan = norm($("#fTxChan").value);
-  var frDev = norm($("#fRxDev").value);
-  var frChan = norm($("#fRxChan").value);
-  var onlyRows = $("#onlyRowsWithSubs").checked;
-  var onlyCols = $("#onlyColsWithSubs").checked;
+  // --- kompakte Filter ---
+  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
+  var fTx = norm(fTxEl ? fTxEl.value : "");
+  var fRx = norm(fRxEl ? fRxEl.value : "");
+  var onlyRows = $("#onlyRowsWithSubs") && $("#onlyRowsWithSubs").checked;
+  var onlyCols = $("#onlyColsWithSubs") && $("#onlyColsWithSubs").checked;
 
-  // Determine visible columns
-  var visCols = cols.filter(function(c){
-    var okDev = !ftDev || norm(c.dev.name).indexOf(ftDev) >= 0;
-    var okChan = !ftChan || norm(c.tx.label).indexOf(ftChan) >= 0;
-    return okDev && okChan;
+  function deviceMatchesTx(dev){
+    if(!fTx) return true;
+    if(norm(dev.name).indexOf(fTx) >= 0) return true;
+    for(var i=0;i<dev.tx.length;i++){
+      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
+    }
+    return false;
+  }
+  function deviceMatchesRx(dev){
+    if(!fRx) return true;
+    if(norm(dev.name).indexOf(fRx) >= 0) return true;
+    for(var i=0;i<dev.rx.length;i++){
+      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
+    }
+    return false;
+  }
+
+  // sichtbare Spalten (TX) und Zeilen (RX)
+  var visCols = [];
+  devices.forEach(function(d){
+    if(!deviceMatchesTx(d)) return;
+    d.tx.forEach(function(tx){ visCols.push({ dev:d, tx:tx }); });
   });
 
-  // Determine visible rows
-  var visRows = rows.filter(function(r){
-    var okDev = !frDev || norm(r.dev.name).indexOf(frDev) >= 0;
-    var okChan = !frChan || norm(r.rx.name).indexOf(frChan) >= 0;
-    if(!okDev || !okChan) return false;
-    if(onlyRows) return !!r.rx.subDev; // row has subscription
-    return true;
+  var visRows = [];
+  devices.forEach(function(d){
+    if(!deviceMatchesRx(d)) return;
+    d.rx.forEach(function(rx){
+      if(onlyRows && !rx.subDev) return;
+      visRows.push({ dev:d, rx:rx });
+    });
   });
 
-  // if onlyCols, detect which columns actually have any sub
   if(onlyCols){
     visCols = visCols.filter(function(c){
       for(var i=0;i<visRows.length;i++){
@@ -125,125 +156,121 @@ function renderMatrix(){
     });
   }
 
-  // Header row 0: two sticky cells at left (RX device / RX channel), then TX device groups
+  // --- Header: Gruppe TX-Geräte ---
   var tr0 = cel("tr");
-  var tl0 = cel("th","top-left-0"); tl0.style.minWidth="220px"; tl0.textContent="RX Gerät";
-  var tl1 = cel("th","top-left-1"); tl1.style.minWidth="180px"; tl1.textContent="RX Kanal";
-  tr0.appendChild(tl0); tr0.appendChild(tl1);
+  var thRXDev = cel("th","top-left-0","RX Gerät"); thRXDev.style.minWidth="220px";
+  var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
+  tr0.appendChild(thRXDev); tr0.appendChild(thRXChan);
 
-  // group by device for TX header
+  // group runs
   var groupRuns = [];
   var lastName = null, run = null;
-  visCols.forEach(function(c){
+  for(var cidx=0;cidx<visCols.length;cidx++){
+    var c = visCols[cidx];
     if(!run || run.name !== c.dev.name){
-      run = { name: c.dev.name, dev:c.dev, count:0, cols:[] };
+      run = { name: c.dev.name, dev: c.dev, cols: [], count: 0 };
       groupRuns.push(run);
     }
-    run.count++; run.cols.push(c);
-  });
-
-  groupRuns.forEach(function(g){
+    run.cols.push(c);
+    run.count++;
+  }
+  for(var g=0; g<groupRuns.length; g++){
+    var grp = groupRuns[g];
     var th = cel("th","group");
-    th.colSpan = g.count;
-    // editable device name (TX)
-    var span = cel("span","editable", g.name || "(ohne Name)");
+    th.colSpan = grp.count;
+
+    var span = cel("span","editable", grp.name || "(ohne Name)");
     span.dataset.role = "dev-name-tx";
-    span.dataset.devIndex = devices.indexOf(g.dev);
-    if(editEnabled){ span.contentEditable="true"; }
+    span.dataset.devIndex = String(devices.indexOf(grp.dev));
+    if(editEnabled && editMode==="names"){ span.contentEditable = "true"; }
+
     th.appendChild(span);
     tr0.appendChild(th);
-  });
+  }
 
-  // Header row 1: TX channel labels
+  // --- Header: TX Kanalzeile ---
   var tr1 = cel("tr");
-  var h1a = cel("th","rowhead"); h1a.textContent=""; tr1.appendChild(h1a);
-  var h1b = cel("th","rowchan"); h1b.textContent=""; tr1.appendChild(h1b);
-  visCols.forEach(function(c){
-    var th = cel("th","tx-chan");
-    var span = cel("span","editable", c.tx.label || "");
-    span.dataset.role = "tx-chan";
-    span.dataset.devIndex = devices.indexOf(c.dev);
-    span.dataset.chanId = c.tx.id;
-    if(editEnabled){ span.contentEditable="true"; }
-    th.appendChild(span);
-    tr1.appendChild(th);
-  });
+  tr1.appendChild(cel("th","rowhead",""));
+  tr1.appendChild(cel("th","rowchan",""));
+  for(var i=0;i<visCols.length;i++){
+    var cc = visCols[i];
+    var thc = cel("th","tx-chan");
+    var spc = cel("span","editable", cc.tx.label || "");
+    spc.dataset.role = "tx-chan";
+    spc.dataset.devIndex = String(devices.indexOf(cc.dev));
+    spc.dataset.chanId   = String(cc.tx.id);
+    if(editEnabled && editMode==="names"){ spc.contentEditable = "true"; }
+    thc.appendChild(spc);
+    tr1.appendChild(thc);
+  }
 
   thead.appendChild(tr0);
   thead.appendChild(tr1);
 
-  // Body rows
-  visRows.forEach(function(r, idx){
+  // --- Body: RX Zeilen ---
+  for(var r=0; r<visRows.length; r++){
+    var row = visRows[r];
     var tr = cel("tr");
-    // RX device name (editable)
-    var tdDev = cel("th","rowhead");
-    var dspan = cel("span","editable", r.dev.name || "(ohne Name)");
+
+    // RX-Gerätename
+    var thD = cel("th","rowhead");
+    var dspan = cel("span","editable", row.dev.name || "(ohne Name)");
     dspan.dataset.role = "dev-name-rx";
-    dspan.dataset.devIndex = devices.indexOf(r.dev);
-    if(editEnabled){ dspan.contentEditable="true"; }
-    tdDev.appendChild(dspan);
-    tr.appendChild(tdDev);
+    dspan.dataset.devIndex = String(devices.indexOf(row.dev));
+    if(editEnabled && editMode==="names"){ dspan.contentEditable = "true"; }
+    thD.appendChild(dspan);
+    tr.appendChild(thD);
 
-    // RX channel name (editable)
-    var tdChan = cel("th","rowchan");
-    var cspan = cel("span","editable", r.rx.name || "");
+    // RX-Kanalname
+    var thC = cel("th","rowchan");
+    var cspan = cel("span","editable", row.rx.name || "");
     cspan.dataset.role = "rx-chan";
-    cspan.dataset.devIndex = devices.indexOf(r.dev);
-    cspan.dataset.chanId = r.rx.id;
-    if(editEnabled){ cspan.contentEditable="true"; }
-    tdChan.appendChild(cspan);
-    tr.appendChild(tdChan);
+    cspan.dataset.devIndex = String(devices.indexOf(row.dev));
+    cspan.dataset.chanId   = String(row.rx.id);
+    if(editEnabled && editMode==="names"){ cspan.contentEditable = "true"; }
+    thC.appendChild(cspan);
+    tr.appendChild(thC);
 
-    // Cells
-    visCols.forEach(function(c){
-      var td = cel("td","cell" + (editEnabled ? " editable":""));
-      var isSub = r.rx.subDev === c.dev.name && r.rx.subChan === c.tx.label;
-      if(isSub){ var dot = cel("span","dot"); td.appendChild(dot); }
+    // Zellen
+    for(var x=0; x<visCols.length; x++){
+      var col = visCols[x];
+      var cellEditable = (editEnabled && editMode==="subs");
+      var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
+      var isSub = (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
+      if(isSub){
+        var dot = cel("span","dot","");
+        td.appendChild(dot);
+      }
       td.dataset.role = "cell";
-      td.dataset.rxDevIndex = devices.indexOf(r.dev);
-      td.dataset.rxChanId = r.rx.id;
-      td.dataset.txDevIndex = devices.indexOf(c.dev);
-      td.dataset.txChanId = c.tx.id;
+      td.dataset.rxDevIndex = String(devices.indexOf(row.dev));
+      td.dataset.rxChanId   = String(row.rx.id);
+      td.dataset.txDevIndex = String(devices.indexOf(col.dev));
+      td.dataset.txChanId   = String(col.tx.id);
       tr.appendChild(td);
-    });
+    }
 
     tbody.appendChild(tr);
-  });
+  }
 
-  // Bind contenteditable listeners (delegated)
+  // --- Interaktion (delegiert) ---
   thead.onclick = tbody.onclick = function(ev){
     var t = ev.target;
     if(!t || !t.dataset) return;
+    if(!editEnabled) return;
 
-    // edits allowed only when editEnabled
-    if(t.dataset.role === "dev-name-tx" && editEnabled){
-      makeEditable(t, function(newVal){
-        renameDevice(t, "tx", newVal);
-      });
-    }
-    else if(t.dataset.role === "tx-chan" && editEnabled){
-      makeEditable(t, function(newVal){
-        renameTxChannel(t, newVal);
-      });
-    }
-    else if(t.dataset.role === "dev-name-rx" && editEnabled){
-      makeEditable(t, function(newVal){
-        renameDevice(t, "rx", newVal);
-      });
-    }
-    else if(t.dataset.role === "rx-chan" && editEnabled){
-      makeEditable(t, function(newVal){
-        renameRxChannel(t, newVal);
-      });
-    }
-    else if(t.dataset.role === "cell" && editEnabled){
-      toggleSubscription(t);
+    if(editMode === "names"){
+      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(newVal){ renameDevice(t, "tx", newVal); }); }
+      else if(t.dataset.role === "tx-chan"){ makeEditable(t, function(newVal){ renameTxChannel(t, newVal); }); }
+      else if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(newVal){ renameDevice(t, "rx", newVal); }); }
+      else if(t.dataset.role === "rx-chan"){ makeEditable(t, function(newVal){ renameRxChannel(t, newVal); }); }
+    } else if(editMode === "subs"){
+      if(t.dataset.role === "cell"){ toggleSubscription(t); }
     }
   };
 }
 
+// --------- Edit-Helfer ----------
 function makeEditable(span, apply){
-  // already contentEditable true; apply on Enter/blur
   var done = false;
   function finish(){
     if(done) return;
@@ -255,101 +282,110 @@ function makeEditable(span, apply){
   }
   function onBlur(){ finish(); }
   function onKey(e){ if(e.key==="Enter"){ e.preventDefault(); span.blur(); } }
+
   span.addEventListener("blur", onBlur);
   span.addEventListener("keydown", onKey);
   span.focus();
-  document.execCommand && document.execCommand("selectAll", false, null);
+  if(document.execCommand) try{ document.execCommand("selectAll", false, null); }catch(_){}
 }
 
+// --------- Umbenennungen ----------
 function renameDevice(span, kind, newName){
-  var di = parseInt(span.dataset.devIndex,10);
+  var di = parseInt(span.dataset.devIndex, 10);
   if(isNaN(di) || !devices[di]) return;
   var dev = devices[di];
   var oldName = dev.name || "";
-
   if(newName === oldName) return;
-  // update XML
+
   var nameEl = dev.el.querySelector("name");
   if(!nameEl){ nameEl = xmlDoc.createElement("name"); dev.el.insertBefore(nameEl, dev.el.firstChild); }
   nameEl.textContent = newName;
 
-  // if TX device renamed -> update ALL rx.subscribed_device that point to oldName
-  // if RX device renamed -> no need to touch subscriptions (they point to TX side)
+  // nur wenn TX-Gerät umbenannt wird, müssen Subscriptions angepasst werden
   if(kind === "tx"){
-    rows.forEach(function(r){
+    for(var i=0;i<rows.length;i++){
+      var r = rows[i];
       if(r.rx.subDev === oldName){
         var sd = r.rx.el.querySelector("subscribed_device");
-        if(sd) sd.textContent = newName;
+        if(!sd){ sd = xmlDoc.createElement("subscribed_device"); r.rx.el.appendChild(sd); }
+        sd.textContent = newName;
         r.rx.subDev = newName;
       }
-    });
+    }
   }
 
-  // update local model
   dev.name = newName;
   renderMatrix();
   persist();
 }
 
 function renameTxChannel(span, newLabel){
-  var di = parseInt(span.dataset.devIndex,10);
+  var di = parseInt(span.dataset.devIndex, 10);
   var cid = span.dataset.chanId || "";
-  var dev = devices[di]; if(!dev) return;
+  if(isNaN(di) || !devices[di]) return;
+  var dev = devices[di];
 
-  // find the tx channel element
-  var tx = (dev.tx || []).find(function(x){ return String(x.id)===String(cid); });
+  var tx = null;
+  for(var i=0;i<dev.tx.length;i++){ if(String(dev.tx[i].id) === String(cid)) { tx = dev.tx[i]; break; } }
   if(!tx) return;
 
+  var oldLabel = tx.label || "";
   var labEl = tx.el.querySelector("label");
   if(!labEl){ labEl = xmlDoc.createElement("label"); tx.el.appendChild(labEl); }
-  var oldLabel = tx.label || "";
-  tx.label = newLabel;
   labEl.textContent = newLabel;
+  tx.label = newLabel;
 
-  // update subscriptions that target this TX channel (by device+label)
-  rows.forEach(function(r){
-    if(r.rx.subDev === dev.name && r.rx.subChan === oldLabel){
-      var sc = r.rx.el.querySelector("subscribed_channel");
-      if(sc) sc.textContent = newLabel;
-      r.rx.subChan = newLabel;
+  // Subscriptions, die auf (dev.name, oldLabel) zeigen, auf neues Label umbiegen
+  for(var r=0;r<rows.length;r++){
+    var row = rows[r];
+    if(row.rx.subDev === dev.name && row.rx.subChan === oldLabel){
+      var sc = row.rx.el.querySelector("subscribed_channel");
+      if(!sc){ sc = xmlDoc.createElement("subscribed_channel"); row.rx.el.appendChild(sc); }
+      sc.textContent = newLabel;
+      row.rx.subChan = newLabel;
     }
-  });
+  }
 
   renderMatrix();
   persist();
 }
 
 function renameRxChannel(span, newName){
-  var di = parseInt(span.dataset.devIndex,10);
+  var di = parseInt(span.dataset.devIndex, 10);
   var cid = span.dataset.chanId || "";
-  var dev = devices[di]; if(!dev) return;
+  if(isNaN(di) || !devices[di]) return;
+  var dev = devices[di];
 
-  var rx = (dev.rx || []).find(function(x){ return String(x.id)===String(cid); });
+  var rx = null;
+  for(var i=0;i<dev.rx.length;i++){ if(String(dev.rx[i].id) === String(cid)) { rx = dev.rx[i]; break; } }
   if(!rx) return;
 
   var nEl = rx.el.querySelector("name");
   if(!nEl){ nEl = xmlDoc.createElement("name"); rx.el.insertBefore(nEl, rx.el.firstChild); }
-  rx.name = newName;
   nEl.textContent = newName;
+  rx.name = newName;
 
   renderMatrix();
   persist();
 }
 
+// --------- Subscription Toggle ----------
 function toggleSubscription(td){
-  var rdi = parseInt(td.dataset.rxDevIndex,10);
+  var rdi = parseInt(td.dataset.rxDevIndex, 10);
   var rid = td.dataset.rxChanId || "";
-  var tdi = parseInt(td.dataset.txDevIndex,10);
+  var tdi = parseInt(td.dataset.txDevIndex, 10);
   var tid = td.dataset.txChanId || "";
+
+  if(isNaN(rdi) || isNaN(tdi)) return;
   var rdev = devices[rdi], tdev = devices[tdi];
   if(!rdev || !tdev) return;
 
-  var rx = (rdev.rx||[]).find(function(x){ return String(x.id)===String(rid); });
-  var tx = (tdev.tx||[]).find(function(x){ return String(x.id)===String(tid); });
+  var rx = null, tx = null, i;
+  for(i=0;i<rdev.rx.length;i++){ if(String(rdev.rx[i].id) === String(rid)) { rx = rdev.rx[i]; break; } }
+  for(i=0;i<tdev.tx.length;i++){ if(String(tdev.tx[i].id) === String(tid)) { tx = tdev.tx[i]; break; } }
   if(!rx || !tx) return;
 
-  // Toggle: if already subscribed to this TX → clear; otherwise set to this TX
-  var already = rx.subDev === tdev.name && rx.subChan === tx.label;
+  var already = (rx.subDev === tdev.name && rx.subChan === tx.label);
   if(already){
     var sd = rx.el.querySelector("subscribed_device");
     var sc = rx.el.querySelector("subscribed_channel");
@@ -357,12 +393,12 @@ function toggleSubscription(td){
     if(sc) sc.textContent = "";
     rx.subDev = ""; rx.subChan = "";
   } else {
-    var sd = rx.el.querySelector("subscribed_device");
-    var sc = rx.el.querySelector("subscribed_channel");
-    if(!sd){ sd = xmlDoc.createElement("subscribed_device"); rx.el.appendChild(sd); }
-    if(!sc){ sc = xmlDoc.createElement("subscribed_channel"); rx.el.appendChild(sc); }
-    sd.textContent = tdev.name;
-    sc.textContent = tx.label;
+    var sd2 = rx.el.querySelector("subscribed_device");
+    var sc2 = rx.el.querySelector("subscribed_channel");
+    if(!sd2){ sd2 = xmlDoc.createElement("subscribed_device"); rx.el.appendChild(sd2); }
+    if(!sc2){ sc2 = xmlDoc.createElement("subscribed_channel"); rx.el.appendChild(sc2); }
+    sd2.textContent = tdev.name;
+    sc2.textContent = tx.label;
     rx.subDev = tdev.name; rx.subChan = tx.label;
   }
 
@@ -370,35 +406,49 @@ function toggleSubscription(td){
   persist();
 }
 
+// --------- Persistenz ----------
 function persist(){
-  // schreibe XML zurück in localStorage
-  var s = new XMLSerializer().serializeToString(xmlDoc);
-  localStorage.setItem(LS_KEY, s);
+  try{
+    var s = new XMLSerializer().serializeToString(xmlDoc);
+    localStorage.setItem(LS_KEY, s);
+  }catch(e){
+    // still ignore, but show hint
+    var h = $("#hint"); if(h) h.textContent = "Persist-Fehler: " + (e.message || String(e));
+  }
 }
 
-// ---------- UI Bindings ----------
+// --------- UI Bindings ----------
 function bindUI(){
-  // Edit Toggle
-  $("#toggleEdit").addEventListener("change", function(e){
-    editEnabled = !!e.target.checked;
-    renderMatrix();
-  });
+  var toggleEdit = $("#toggleEdit");
+  if(toggleEdit){
+    toggleEdit.addEventListener("change", function(e){
+      editEnabled = !!e.target.checked;
+      renderMatrix();
+    });
+  }
+  var modeSelect = $("#modeSelect");
+  if(modeSelect){
+    modeSelect.addEventListener("change", function(e){
+      editMode = (e.target.value === "names") ? "names" : "subs";
+      renderMatrix();
+    });
+  }
 
-  // Filters
-  ["fTxDev","fTxChan","fRxDev","fRxChan","onlyRowsWithSubs","onlyColsWithSubs"].forEach(function(id){
-    var el = $("#"+id);
+  // kompakte Filter
+  ["fTx","fRx","onlyRowsWithSubs","onlyColsWithSubs"].forEach(function(id){
+    var el = document.getElementById(id);
     if(!el) return;
     var handler = function(){ renderMatrix(); };
-    if(el.tagName==="INPUT" && el.type==="text"){
-      el.addEventListener("input", handler);
-    } else {
-      el.addEventListener("change", handler);
-    }
+    if(el.type === "text"){ el.addEventListener("input", handler); }
+    else { el.addEventListener("change", handler); }
   });
 
-  // Save & back
-  $("#btnSaveBack").addEventListener("click", function(){
-    persist();
-    location.href = "./Index.html";
-  });
+  // Speichern & Zurück
+  var back = $("#btnSaveBack");
+  if(back){
+    back.addEventListener("click", function(){
+      persist();
+      location.href = "./Index.html";
+    });
+  }
 }
