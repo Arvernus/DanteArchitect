@@ -156,7 +156,7 @@ function readFromSession(){
 // ---- Bibliothek Sidebar rendern + Wizard binden ----
 window.renderLibrarySidebar = function(){
   if (!window.DA_LIB) return;
-  var cont = $("#libSidebarBody"); if(!cont) return;
+  var cont = document.getElementById("libSidebarBody"); if(!cont) return;
   window.DA_LIB.renderSidebarInto(cont);
 };
 try { window.renderLibrarySidebar(); } catch(_){}
@@ -165,7 +165,7 @@ try { window.renderLibrarySidebar(); } catch(_){}
   function openWizardFromCurrentPreset(){
     var xmlDoc = window.lastXmlDoc;
     if (!xmlDoc) {
-      try { var s = readFromSession(); if(s) xmlDoc = new DOMParser().parseFromString(s, "application/xml"); } catch(_) {}
+      try { var s = sessionStorage.getItem("DA_PRESET_XML"); if(s) xmlDoc = new DOMParser().parseFromString(s, "application/xml"); } catch(_) {}
     }
     if (!xmlDoc) { alert("Kein Preset geladen."); return; }
     if (!window.DA_LIB || !window.DA_LIB.openAdoptWizard) { alert("Library-Modul (Lib.js) nicht geladen."); return; }
@@ -179,13 +179,12 @@ try { window.renderLibrarySidebar(); } catch(_){}
     btn.addEventListener("click", openWizardFromCurrentPreset);
     return true;
   }
-  var ok1 = bindOnce("btnLibWizard");
-  var ok2 = bindOnce("btnLibWizardSidebar");
-  if (!ok1 || !ok2) {
-    document.addEventListener("DOMContentLoaded", function(){ bindOnce("btnLibWizard"); bindOnce("btnLibWizardSidebar"); }, {once:true});
+  // Nur noch Sidebar-Button
+  var ok = bindOnce("btnLibWizardSidebar");
+  if (!ok) {
+    document.addEventListener("DOMContentLoaded", function(){ bindOnce("btnLibWizardSidebar"); }, {once:true});
     var tries=0, t=setInterval(function(){
-      tries++; var a=bindOnce("btnLibWizard"), b=bindOnce("btnLibWizardSidebar");
-      if((a||b) && window.DA_LIB){ clearInterval(t); }
+      tries++; if(bindOnce("btnLibWizardSidebar") && window.DA_LIB){ clearInterval(t); }
       if(tries>10) clearInterval(t);
     },150);
   }

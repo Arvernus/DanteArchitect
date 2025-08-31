@@ -21,19 +21,40 @@ window.DA_LIB = (function(){
     throw new Error("Ungültiges JSON-Format für Model Library.");
   }
 
-  // Fingerprint aus Device
+  // Hilfsfunktion: ersten vorhandenen Tag aus Liste lesen
+  function readFirstText(el, tagNames){
+    for(var i=0;i<tagNames.length;i++){
+      var t = el.querySelector(tagNames[i]);
+      if(t && t.textContent) return t.textContent.trim();
+    }
+    return "";
+  }
+
+  // Fingerprint + Vendor/Model aus Device-XML
   function fingerprintDevice(deviceEl){
-    var nameEl = deviceEl.querySelector("name");
-    var devName = nameEl && nameEl.textContent ? nameEl.textContent.trim() : "";
+    var devName = readFirstText(deviceEl, ["name"]);
+    var vendor  = readFirstText(deviceEl, ["manufacturer", "vendor", "brand", "maker"]);
+    var model   = readFirstText(deviceEl, ["model_name", "model", "product_name", "product"]);
+
     var tx = Array.prototype.slice.call(deviceEl.querySelectorAll("txchannel"));
     var rx = Array.prototype.slice.call(deviceEl.querySelectorAll("rxchannel"));
+
     function lbl(list, sel){
       var arr=[]; for(var i=0;i<Math.min(list.length,16);i++){ var el=list[i].querySelector(sel); arr.push(el&&el.textContent?el.textContent.trim():""); } return arr;
     }
-    return { txCount: tx.length, rxCount: rx.length, txLabels: lbl(tx,"label"), rxLabels: lbl(rx,"name"), devNameHint: devName };
+
+    return {
+      txCount: tx.length, rxCount: rx.length,
+      txLabels: lbl(tx,"label"), rxLabels: lbl(rx,"name"),
+      devNameHint: devName,
+      vendorHint: vendor,
+      modelHint: model
+    };
   }
+
   function matchesModel(fp, m){
     if(!m) return false;
+    // Primärschlüssel: TX/RX-Count; Vendor/Model sind informativ (optional variabel)
     return (fp.txCount===m.txCount) && (fp.rxCount===m.rxCount);
   }
   function findMatchingModelId(fp){
@@ -43,7 +64,8 @@ window.DA_LIB = (function(){
     var list = load();
     var id = "mdl_" + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
     var model = {
-      id, modelName: String(modelName||"").trim() || ("Model-"+fp.txCount+"x"+fp.rxCount),
+      id,
+      modelName: String(modelName||"").trim() || ("Model-"+fp.txCount+"x"+fp.rxCount),
       vendor: vendor ? String(vendor).trim() : "",
       txCount: fp.txCount, rxCount: fp.rxCount,
       txLabels: fp.txLabels||[], rxLabels: fp.rxLabels||[],
@@ -66,9 +88,13 @@ window.DA_LIB = (function(){
     var rows = devices.map(function(de, idx){
       var fp = fingerprintDevice(de);
       var matchId = findMatchingModelId(fp);
+
+      // Defaults aus echten Tags
       var devName = fp.devNameHint || ("Device-"+(idx+1));
-      var mn = (devName.split(/\s|-/)[0] || "").trim(); if(!mn) mn = "Model-"+fp.txCount+"x"+fp.rxCount;
-      return { fp, devName, modelId: matchId, modelNameDefault: mn, vendor: "" };
+      var vendor  = fp.vendorHint || "";
+      var mName   = fp.modelHint || (devName.split(/\s|-/)[0] || ("Model-"+fp.txCount+"x"+fp.rxCount));
+
+      return { fp, devName, modelId: matchId, modelNameDefault: mName, vendor: vendor };
     });
 
     var filterInput = document.getElementById("libwizFilter");
@@ -86,7 +112,7 @@ window.DA_LIB = (function(){
         if(unk && !isUnknown) return;
 
         var hay = [
-          row.devName, row.modelNameDefault,
+          row.devName, row.modelNameDefault, row.vendor || "",
           (row.fp.txLabels||[]).join(" "),
           (row.fp.rxLabels||[]).join(" "),
           String(row.fp.txCount)+"x"+String(row.fp.rxCount)
