@@ -348,7 +348,7 @@ window.DA_LIB = (function () {
           .filter(Boolean)
           .slice(0, 6)
           .join(", ");
-        tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)";
+tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
 
         const tdVendor = document.createElement("td");
         tdVendor.textContent = row.fp.manufacturer;
