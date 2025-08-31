@@ -413,6 +413,21 @@ window.DA_LIB = (function () {
   }
 
   // ===== UI: Adopt Wizard =====
+function findModelsByModelName(model_name) {
+  const list = load();
+  const needle = String(model_name || "").trim().toLowerCase();
+  return list.filter(m => String(m.model_name || "").trim().toLowerCase() === needle);
+}
+
+function findSameModelSameManufacturer(model_name, manufacturer_name) {
+  const nameL = String(model_name || "").trim().toLowerCase();
+  const manL  = String(manufacturer_name || "").trim().toLowerCase();
+  const list = load();
+  return list.find(m =>
+    String(m.model_name || "").trim().toLowerCase() === nameL &&
+    String(m.manufacturer_name || "").trim().toLowerCase() === manL
+  ) || null;
+}
   function openAdoptWizard(xmlDoc) {
     const modal = document.getElementById("libWizardModal");
     if (!modal) {
@@ -445,7 +460,7 @@ window.DA_LIB = (function () {
       let shown = 0;
 
       devices.forEach((row) => {
-        const isUnknown = !row.modelId;
+const isUnknown = findModelsByModelName(row.fp.model_name).length === 0;
         if (unk && !isUnknown) return;
 
         const hay = [
@@ -491,17 +506,50 @@ window.DA_LIB = (function () {
         btn.className = "btn";
         btn.textContent = isUnknown ? "Übernehmen" : "Schon in Lib";
         btn.disabled = !isUnknown;
-        btn.onclick = function () {
-  // 1) Modell in die Library übernehmen (mit Dedupe)
-  const model = addModelFromFP(row.fp);
+btn.onclick = function () {
+  const fp = row.fp;
 
-  // 2) Alle Reihen neu gegen die Library prüfen
-  //    -> auch weitere identische Geräte werden als "Schon in Lib" erkannt
+  // Kandidaten nur nach model_name
+  const sameName = findModelsByModelName(fp.model_name);
+
+  if (sameName.length === 0) {
+    // Noch kein Modell mit diesem model_name → neu anlegen
+    const model = addModelFromFP(fp);
+  } else {
+    // Gibt es eins mit gleichem Hersteller?
+    const exact = findSameModelSameManufacturer(fp.model_name, fp.manufacturer_name);
+    if (exact) {
+      // Bereits exakt vorhanden → nichts anlegen, auf dieses mappen
+      // (kein addModelFromFP nötig)
+    } else {
+      // Abweichender Hersteller bei gleichem Modelnamen → Benutzer fragen
+      const listText = sameName
+        .map(m => `• ${m.manufacturer_name || "(ohne Hersteller)"} / ${m.model_name}`)
+        .join("\n");
+      const msg =
+        `Es existieren bereits Modelle mit demselben Modelnamen („${fp.model_name}“), ` +
+        `aber anderem Hersteller.\n\nBereits vorhanden:\n${listText}\n\n` +
+        `Neues Modell anlegen mit:\n` +
+        `• Hersteller: ${fp.manufacturer_name || "(leer)"}\n` +
+        `• Modelname: ${fp.model_name}\n\n` +
+        `OK = Neues Modell anlegen\nAbbrechen = Vorhandenes weiter nutzen (kein Anlegen)`;
+      const createNew = window.confirm(msg);
+      if (createNew) {
+        addModelFromFP(fp);
+      } else {
+        // nichts tun; bleibt „Schon in Lib“ durch Neuprüfung unten,
+        // falls du stattdessen gezielt auf ein vorhandenes mappen willst:
+        // row.modelId = sameName[0].id;  // optional
+      }
+    }
+  }
+
+  // Nach jeder Aktion: alle Zeilen neu gegen die Library prüfen
   devices.forEach(function (r) {
-    r.modelId = findExistingModelId(r.fp);
+    // "bekannt" jetzt: gibt es mind. 1 Modell mit gleichem model_name?
+    r.modelId = (findModelsByModelName(r.fp.model_name)[0] || {}).id || null;
   });
 
-  // 3) UI aktualisieren
   render();
   requestRenderSidebar();
 };
