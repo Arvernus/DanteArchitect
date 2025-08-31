@@ -190,6 +190,26 @@ try { window.renderLibrarySidebar(); } catch(_){}
   }
 })();
 
+// --- Library-Sidebar sicher initial anzeigen ---
+(function ensureInitialLibraryRender(){
+  function attempt(){
+    if (window.DA_LIB && typeof window.DA_LIB.renderSidebarInto === "function") {
+      var cont = document.getElementById("libSidebarBody");
+      if (cont) window.DA_LIB.renderSidebarInto(cont);
+      return true;
+    }
+    return false;
+  }
+  if (!attempt()){
+    document.addEventListener("DOMContentLoaded", attempt, { once:true });
+    var tries = 0, t = setInterval(function(){
+      tries++;
+      if (attempt()) { clearInterval(t); }
+      if (tries > 10) clearInterval(t);
+    }, 150);
+  }
+})();
+
 // ---- Safe Autoload nach Rücksprung (#via=matrix) ----
 (function safeAutoloadAfterBack(){
   try{
