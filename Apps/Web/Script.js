@@ -327,3 +327,101 @@ try { connect(); } catch(e) {}
     console.warn("safeAutoloadFromSession skipped:", e);
   }
 })();
+
+// --- Bibliothek Sidebar initial zeichnen + Zahnrad-Klick binden ---
+window.renderLibrarySidebar = function(){
+  var cont = document.getElementById("libSidebarBody");
+  if(!cont || !window.DA_LIB) return;
+  window.DA_LIB.renderSidebarInto(cont);
+};
+try{ window.renderLibrarySidebar(); }catch(_){}
+
+(function(){
+  var btn = document.getElementById("btnLibWizard");
+  if(!btn || !window.DA_LIB) return;
+  btn.addEventListener("click", function(){
+    // aktuelle Preset-Quelle: bevorzugt lastXmlDoc, sonst Session
+    var xmlDoc = window.lastXmlDoc;
+    if(!xmlDoc){
+      try{
+        var s = sessionStorage.getItem("DA_PRESET_XML");
+        if(s){ xmlDoc = new DOMParser().parseFromString(s, "application/xml"); }
+      }catch(_){}
+    }
+    if(!xmlDoc){
+      alert("Kein Preset geladen.");
+      return;
+    }
+    window.DA_LIB.openAdoptWizard(xmlDoc);
+  });
+})();
+
+// --- Sidebar aktivieren: Body rechts freiräumen ---
+(function enableRightSidebarLayout(){
+  try { document.body.classList.add("with-right-sidebar"); } catch(_) {}
+})();
+
+// --- Library in Sidebar rendern ---
+window.renderLibrarySidebar = function(){
+  if (!window.DA_LIB) return;
+  var cont = document.getElementById("libSidebarBody");
+  if (!cont) return;
+  window.DA_LIB.renderSidebarInto(cont);
+};
+
+// initial zeichnen (falls Lib vorhanden)
+try { window.renderLibrarySidebar(); } catch(_){}
+
+// --- Zahnrad/Wizard binden ---
+(function attachLibWizardButton(){
+  if (!window.DA_LIB) return;
+  var btn = document.getElementById("btnLibWizard");
+  if (!btn) return;
+
+  btn.addEventListener("click", function(){
+    // Quelle: bevorzugt RAM, sonst SessionStorage
+    var xmlDoc = window.lastXmlDoc;
+    if (!xmlDoc) {
+      try {
+        var s = sessionStorage.getItem("DA_PRESET_XML");
+        if (s) xmlDoc = new DOMParser().parseFromString(s, "application/xml");
+      } catch(_) {}
+    }
+    if (!xmlDoc) {
+      alert("Kein Preset geladen.");
+      return;
+    }
+    window.DA_LIB.openAdoptWizard(xmlDoc);
+  });
+})();
+
+// --- Resizing für Sidebar (drag left edge) ---
+(function makeRightSidebarResizable(){
+  var sidebar = document.getElementById("rightSidebar");
+  var resizer = document.getElementById("sidebarResizer");
+  if (!sidebar || !resizer) return;
+
+  var startX = 0;
+  var startWidth = 0;
+  var startBodyMargin = 0;
+
+  function onMouseMove(e){
+    var dx = startX - e.clientX; // nach links ziehen = breiter
+    var newWidth = Math.min(Math.max(startWidth + dx, 260), window.innerWidth * 0.6);
+    sidebar.style.width = newWidth + "px";
+    // body-margin rechts anpassen, damit Content nicht überdeckt
+    document.body.style.marginRight = newWidth + "px";
+  }
+  function onMouseUp(){
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+  resizer.addEventListener("mousedown", function(e){
+    startX = e.clientX;
+    startWidth = sidebar.getBoundingClientRect().width;
+    startBodyMargin = parseFloat(getComputedStyle(document.body).marginRight) || startWidth;
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    e.preventDefault();
+  });
+})();
