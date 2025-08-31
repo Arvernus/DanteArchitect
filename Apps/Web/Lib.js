@@ -1,17 +1,38 @@
 // Apps/Web/Lib.js
-// Library v2 – strikte XSD-Keys; fehlende XML-Felder werden mit Defaults ergänzt.
+// Library v2 – XSD/XML-nahe Keys, modellabhängige model_params, device_defaults mit sinnvollen Defaults,
+// Dedupe inkl. model_params, Wizard (Adopt), Sidebar, Device-XML-Builder.
 
 window.DA_LIB = (function () {
   const LKEY = "DA_MODEL_LIBRARY_V2";
 
-  // ===== Defaults zentral =====
+  // ===== Defaults =====
   const DEFAULTS = {
-    manufacturer: "unknownSupplier",
+    manufacturer_name: "unknownSupplier",
     model_name: "unknownModel",
     name_pattern: "Device-xxxx-[n]",
     txLabelPrefix: "Ch",
     rxNamePrefix: "In",
+
+    // device-defaults
+    serial: "",
+    mac: "",
+    ipv4: "",
+    dhcp: "true",             // als String, damit es 1:1 als XML-Text geschrieben werden kann
+    location: "",
+    firmware_version: "unknown",
+    hardware_rev: "",         // device-spezifische Sicht
   };
+
+  // device simple fields we emit (name is handled separately)
+  const DEVICE_SIMPLE_FIELDS = [
+    "serial",
+    "mac",
+    "ipv4",
+    "dhcp",
+    "location",
+    "firmware_version",
+    "hardware_rev",
+  ];
 
   // ===== Storage =====
   function load() {
@@ -27,6 +48,7 @@ window.DA_LIB = (function () {
 
   function save(list) {
     list.forEach(validateAndNormalize);
+    list = dedupe(list);
     localStorage.setItem(LKEY, JSON.stringify(list || []));
   }
 
@@ -36,61 +58,117 @@ window.DA_LIB = (function () {
 
   function importJson(jsonText) {
     const parsed = JSON.parse(jsonText);
-    const list = Array.isArray(parsed)
+    let list = Array.isArray(parsed)
       ? parsed
       : parsed && Array.isArray(parsed.models)
       ? parsed.models
       : null;
     if (!list) throw new Error("Ungültiges JSON-Format für Model Library (v2).");
+
     list.forEach(validateAndNormalize);
-    localStorage.setItem(LKEY, JSON.stringify(list));
+    list = dedupe(list);
+
+    const current = load();
+    const combined = dedupe(current.concat(list));
+    localStorage.setItem(LKEY, JSON.stringify(combined));
     return list.length;
   }
 
-  // ===== Schema/Validation (leer erlaubt, aber Strings) =====
+  // ===== Validation / Normalize =====
   function validateAndNormalize(m) {
     if (!m || typeof m !== "object") throw new Error("Model fehlt/ungültig");
-    if (m.json_version !== 2) throw new Error("json_version muss 2 sein");
-    if (!m.id) throw new Error("id fehlt");
-    if (typeof m.manufacturer !== "string") m.manufacturer = "";
+    if (m.json_version !== 2) m.json_version = 2;
+    if (!m.id) m.id = "mdl_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+    if (typeof m.manufacturer_name !== "string") m.manufacturer_name = "";
     if (typeof m.model_name !== "string") m.model_name = "";
+
+    // model_params: freie Map<string,string>
+    if (!m.model_params || typeof m.model_params !== "object") m.model_params = {};
+    // Stelle sicher: alle values sind Strings
+    Object.keys(m.model_params).forEach(k => {
+      const v = m.model_params[k];
+      m.model_params[k] = (v == null) ? "" : String(v);
+    });
 
     if (!m.device_defaults) m.device_defaults = {};
     const dd = m.device_defaults;
 
-    if (typeof dd.name_pattern !== "string")
-      dd.name_pattern = DEFAULTS.name_pattern;
+    if (typeof dd.name_pattern !== "string") dd.name_pattern = DEFAULTS.name_pattern;
+
+    // device simple fields defaults
+    DEVICE_SIMPLE_FIELDS.forEach(key => {
+      if (typeof dd[key] !== "string") {
+        dd[key] = (DEFAULTS[key] != null) ? String(DEFAULTS[key]) : "";
+      }
+    });
 
     if (!Array.isArray(dd.txchannels)) dd.txchannels = [];
     if (!Array.isArray(dd.rxchannels)) dd.rxchannels = [];
     if (!Array.isArray(dd.extras)) dd.extras = [];
 
-    // IDs/Labels/Namen sicherstellen
     dd.txchannels.forEach((c, i) => {
       if (typeof c.danteId !== "string") c.danteId = String(i + 1);
-      if (typeof c.label !== "string")
-        c.label = `${DEFAULTS.txLabelPrefix}${i + 1}`;
+      if (typeof c.label !== "string") c.label = `${DEFAULTS.txLabelPrefix}${i + 1}`;
     });
     dd.rxchannels.forEach((c, i) => {
       if (typeof c.danteId !== "string") c.danteId = String(i + 1);
-      if (typeof c.name !== "string")
-        c.name = `${DEFAULTS.rxNamePrefix}${i + 1}`;
+      if (typeof c.name !== "string") c.name = `${DEFAULTS.rxNamePrefix}${i + 1}`;
     });
 
-    // Quelle der Wahrheit: Arrays → Counts
     m.txCount = dd.txchannels.length | 0;
     m.rxCount = dd.rxchannels.length | 0;
+
     if (!m.createdAt) m.createdAt = Date.now();
     if (typeof m.notes !== "string") m.notes = "";
   }
 
-  // ===== XML helpers (namespace-robust) =====
-  const XSD_VENDOR = ["manufacturer"];
-  const XSD_MODEL = ["model_name"];
-  const XSD_NAME = ["name"];
+  // ===== Dedupe =====
+  function normalizeStr(s) {
+    return String(s || "").trim().toLowerCase();
+  }
+  function channelsSignature(arr, key) {
+    return (arr || []).map((c) => (c && typeof c[key] === "string" ? c[key] : "")).join("|");
+  }
+  function paramsSignature(obj) {
+    // stable key order
+    const keys = Object.keys(obj || {}).sort();
+    return keys.map(k => `${k}=${String(obj[k])}`).join("&");
+  }
+  function modelSignature(m) {
+    const man = normalizeStr(m.manufacturer_name);
+    const mod = normalizeStr(m.model_name);
+    const txN = m.txCount | 0;
+    const rxN = m.rxCount | 0;
+    const txSig = channelsSignature(m.device_defaults?.txchannels || [], "label");
+    const rxSig = channelsSignature(m.device_defaults?.rxchannels || [], "name");
+    const mpSig = paramsSignature(m.model_params);
+    return `${man}::${mod}::${txN}x${rxN}::TX{${txSig}}::RX{${rxSig}}::MP{${mpSig}}`;
+  }
+  function dedupe(list) {
+    const seen = new Set();
+    const out = [];
+    for (const m of list) {
+      const sig = modelSignature(m);
+      if (!seen.has(sig)) {
+        seen.add(sig);
+        out.push(m);
+      }
+    }
+    return out;
+  }
 
-  const FB_VENDOR = ["vendor", "brand", "maker", "company"]; // nur Lesen
-  const FB_MODEL = ["model", "product_name", "product"]; // nur Lesen
+  // ===== XML helpers (namespace-robust) =====
+  const XSD_VENDOR = ["manufacturer_name", "manufacturer"]; // Template nutzt manufacturer_name
+  const XSD_MODEL = ["model_name"];
+  const XSD_NAME  = ["name"];
+
+  const FB_VENDOR = [
+    "manufacturerName",
+    "vendor", "vendor_name", "vendorName",
+    "brand", "maker", "company",
+  ];
+  const FB_MODEL  = ["model", "product_name", "product"];
 
   function findByLocalNames(root, names) {
     if (!root) return null;
@@ -118,15 +196,16 @@ window.DA_LIB = (function () {
     return out;
   }
 
-  // ===== Fingerprint aus <device> (XSD-first, Defaults wo nötig) =====
+  // ===== Fingerprint + Extraction =====
   function fingerprintFromDevice(deviceEl) {
     const devName = readFirstText(deviceEl, XSD_NAME, []);
-    let manufacturer = readFirstText(deviceEl, XSD_VENDOR, FB_VENDOR);
-    if (!manufacturer) manufacturer = DEFAULTS.manufacturer;
+    let manufacturer_name = readFirstText(deviceEl, XSD_VENDOR, FB_VENDOR);
+    if (!manufacturer_name) manufacturer_name = DEFAULTS.manufacturer_name;
 
     let model_name = readFirstText(deviceEl, XSD_MODEL, FB_MODEL);
     if (!model_name) model_name = DEFAULTS.model_name;
 
+    // Kanäle
     const txEls = qAllLocal(deviceEl, "txchannel");
     const rxEls = qAllLocal(deviceEl, "rxchannel");
 
@@ -148,14 +227,43 @@ window.DA_LIB = (function () {
       return { danteId: id, name };
     });
 
+    // model_params: alle einfachen direkten Kindelemente mit Text (ein Level),
+    // die NICHT name/manufacturer/model_name/txchannel/rxchannel/subscriptions sind.
+    const model_params = {};
+    for (let i = 0; i < deviceEl.children.length; i++) {
+      const child = deviceEl.children[i];
+      const ln = child.localName || child.nodeName;
+      if (!ln) continue;
+      if (ln === "name" || ln === "manufacturer_name" || ln === "manufacturer" ||
+          ln === "model_name" || ln === "txchannel" || ln === "rxchannel" ||
+          ln === "subscriptions") {
+        continue;
+      }
+      // nur simple text children aufnehmen
+      const text = (child.textContent || "").trim();
+      if (text && child.children.length === 0) {
+        model_params[ln] = text;
+      }
+    }
+
     return {
-      manufacturer,
+      manufacturer_name,
       model_name,
-      devNameHint: devName, // nur UI
+      devNameHint: devName,
       txCount: txchannels.length,
       rxCount: rxchannels.length,
+      model_params,
       device_defaults: {
         name_pattern: DEFAULTS.name_pattern,
+        // device simple fields mit Defaults
+        serial: DEFAULTS.serial,
+        mac: DEFAULTS.mac,
+        ipv4: DEFAULTS.ipv4,
+        dhcp: DEFAULTS.dhcp,
+        location: DEFAULTS.location,
+        firmware_version: DEFAULTS.firmware_version,
+        hardware_rev: DEFAULTS.hardware_rev,
+
         txchannels,
         rxchannels,
         extras: [],
@@ -183,38 +291,66 @@ window.DA_LIB = (function () {
     return out;
   }
 
-  // ===== Vergleich (Modellgleichheit) =====
-  function matchesModel(fp, m) {
-    return fp && m && fp.txCount === m.txCount && fp.rxCount === m.rxCount;
+  // ===== Gleichheits-/Duplicate-Check =====
+  function isSameAsModel(fp, m) {
+    if (!fp || !m) return false;
+    const fakeModel = {
+      manufacturer_name: fp.manufacturer_name,
+      model_name: fp.model_name,
+      txCount: fp.device_defaults.txchannels.length,
+      rxCount: fp.device_defaults.rxchannels.length,
+      device_defaults: {
+        txchannels: fp.device_defaults.txchannels,
+        rxchannels: fp.device_defaults.rxchannels,
+      },
+      model_params: fp.model_params || {},
+    };
+    return modelSignature(fakeModel) === modelSignature(m);
   }
 
-  function findMatchingModelId(fp) {
+  function findExistingModelId(fp) {
     const list = load();
-    for (let i = 0; i < list.length; i++) {
-      if (matchesModel(fp, list[i])) return list[i].id;
+    for (const m of list) {
+      if (isSameAsModel(fp, m)) return m.id;
     }
     return null;
   }
 
-  // ===== Übernahme in Lib (schreibt nur XSD-Keys + device_defaults) =====
+  // ===== Add model (mit Dedupe) =====
   function addModelFromFP(fp) {
     const list = load();
-    const id =
-      "mdl_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
+    const existingId = findExistingModelId(fp);
+    if (existingId) {
+      return list.find(x => x.id === existingId);
+    }
+
+    const id = "mdl_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const model = {
       json_version: 2,
       id,
-      manufacturer: fp.manufacturer || "",
+      manufacturer_name: fp.manufacturer_name || "",
       model_name: fp.model_name || "",
       txCount: fp.device_defaults.txchannels.length,
       rxCount: fp.device_defaults.rxchannels.length,
+      model_params: fp.model_params || {},
+
       device_defaults: {
         name_pattern: fp.device_defaults.name_pattern || DEFAULTS.name_pattern,
+
+        serial: fp.device_defaults.serial ?? DEFAULTS.serial,
+        mac: fp.device_defaults.mac ?? DEFAULTS.mac,
+        ipv4: fp.device_defaults.ipv4 ?? DEFAULTS.ipv4,
+        dhcp: fp.device_defaults.dhcp ?? DEFAULTS.dhcp,
+        location: fp.device_defaults.location ?? DEFAULTS.location,
+        firmware_version: fp.device_defaults.firmware_version ?? DEFAULTS.firmware_version,
+        hardware_rev: fp.device_defaults.hardware_rev ?? DEFAULTS.hardware_rev,
+
         txchannels: fp.device_defaults.txchannels,
         rxchannels: fp.device_defaults.rxchannels,
         extras: fp.device_defaults.extras || [],
       },
+
       notes: "",
       createdAt: Date.now(),
     };
@@ -223,9 +359,8 @@ window.DA_LIB = (function () {
     return model;
   }
 
-  // ===== Device-XML Builder (aus Model) =====
+  // ===== Device-XML Builder =====
   function makeDeviceXml(modelId, opts) {
-    // opts: { name?: string }
     const list = load();
     const m = list.find((x) => x.id === modelId);
     if (!m) throw new Error("Model nicht gefunden");
@@ -237,40 +372,43 @@ window.DA_LIB = (function () {
     const dd = m.device_defaults;
 
     function esc(s) {
-      return String(s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    const txXml = dd.txchannels
-      .map(
-        (c) =>
-          `  <txchannel danteId="${esc(c.danteId)}">\n    <label>${esc(
-            c.label
-          )}</label>\n  </txchannel>`
-      )
-      .join("\n");
-    const rxXml = dd.rxchannels
-      .map(
-        (c) =>
-          `  <rxchannel danteId="${esc(c.danteId)}">\n    <name>${esc(
-            c.name
-          )}</name>\n  </rxchannel>`
-      )
-      .join("\n");
-
-    const manufacturer = m.manufacturer || DEFAULTS.manufacturer;
-    const model_name = m.model_name || DEFAULTS.model_name;
-
-    const xml =
+    // 1) Name + Basis
+    let xml =
       `<device>\n` +
       `  <name>${esc(name)}</name>\n` +
-      `  <manufacturer>${esc(manufacturer)}</manufacturer>\n` +
-      `  <model_name>${esc(model_name)}</model_name>\n` +
-      `${txXml ? txXml + "\n" : ""}${rxXml}\n` +
-      `</device>`;
+      `  <manufacturer_name>${esc(m.manufacturer_name || DEFAULTS.manufacturer_name)}</manufacturer_name>\n` +
+      `  <model_name>${esc(m.model_name || DEFAULTS.model_name)}</model_name>\n`;
 
+    // 2) model_params (in stabiler Reihenfolge)
+    const mpKeys = Object.keys(m.model_params || {}).sort();
+    mpKeys.forEach(k => {
+      const v = m.model_params[k];
+      xml += `  <${k}>${esc(v)}</${k}>\n`;
+    });
+
+    // 3) device simple fields
+    DEVICE_SIMPLE_FIELDS.forEach(key => {
+      const val = (dd[key] != null) ? dd[key] : (DEFAULTS[key] != null ? DEFAULTS[key] : "");
+      if (val !== "" && val !== null && val !== undefined) {
+        xml += `  <${key}>${esc(val)}</${key}>\n`;
+      }
+    });
+
+    // 4) Kanäle
+    const txXml = dd.txchannels.map(
+      (c) => `  <txchannel danteId="${esc(c.danteId)}">\n    <label>${esc(c.label)}</label>\n  </txchannel>`
+    ).join("\n");
+    const rxXml = dd.rxchannels.map(
+      (c) => `  <rxchannel danteId="${esc(c.danteId)}">\n    <name>${esc(c.name)}</name>\n  </rxchannel>`
+    ).join("\n");
+
+    if (txXml) xml += txXml + "\n";
+    if (rxXml) xml += rxXml + "\n";
+
+    xml += `</device>`;
     return xml;
   }
 
@@ -290,11 +428,9 @@ window.DA_LIB = (function () {
 
     const devices = findAllDevices(xmlDoc).map((de, idx) => {
       const fp = fingerprintFromDevice(de);
-      const matchId = findMatchingModelId(fp);
-      // devName nur für Anzeige
-      const devName =
-        fp.devNameHint || `Device-${idx + 1} (${fp.txCount}×${fp.rxCount})`;
-      return { fp, devName, modelId: matchId };
+      const modelId = findExistingModelId(fp);
+      const devName = fp.devNameHint || `Device-${idx + 1} (${fp.txCount}×${fp.rxCount})`;
+      return { fp, devName, modelId };
     });
 
     const filterInput = document.getElementById("libwizFilter");
@@ -314,14 +450,14 @@ window.DA_LIB = (function () {
 
         const hay = [
           row.devName,
-          row.fp.manufacturer || "",
+          row.fp.manufacturer_name || "",
           row.fp.model_name || "",
           String(row.fp.txCount) + "x" + String(row.fp.rxCount),
           row.fp.device_defaults.txchannels.map((c) => c.label).join(" "),
           row.fp.device_defaults.rxchannels.map((c) => c.name).join(" "),
-        ]
-          .join(" ")
-          .toLowerCase();
+          // auch model_params mit durchsuchen
+          Object.entries(row.fp.model_params || {}).map(([k,v]) => `${k}:${v}`).join(" "),
+        ].join(" ").toLowerCase();
         if (txt && hay.indexOf(txt) < 0) return;
 
         shown++;
@@ -339,19 +475,13 @@ window.DA_LIB = (function () {
 
         const tdLabels = document.createElement("td");
         const txs = row.fp.device_defaults.txchannels
-          .map((c) => c.label)
-          .filter(Boolean)
-          .slice(0, 6)
-          .join(", ");
+          .map((c) => c.label).filter(Boolean).slice(0, 6).join(", ");
         const rxs = row.fp.device_defaults.rxchannels
-          .map((c) => c.name)
-          .filter(Boolean)
-          .slice(0, 6)
-          .join(", ");
-tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
+          .map((c) => c.name).filter(Boolean).slice(0, 6).join(", ");
+        tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
 
         const tdVendor = document.createElement("td");
-        tdVendor.textContent = row.fp.manufacturer;
+        tdVendor.textContent = row.fp.manufacturer_name;
 
         const tdModel = document.createElement("td");
         tdModel.textContent = row.fp.model_name;
@@ -432,8 +562,8 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
     list
       .slice()
       .sort((a, b) =>
-        ((a.manufacturer || "") + a.model_name).localeCompare(
-          (b.manufacturer || "") + b.model_name
+        ((a.manufacturer_name || "") + a.model_name).localeCompare(
+          (b.manufacturer_name || "") + b.model_name
         )
       )
       .forEach((m) => {
@@ -445,7 +575,7 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
         row.style.gap = "8px";
 
         const text = document.createElement("div");
-        const vh = m.manufacturer ? m.manufacturer + " / " : "";
+        const vh = m.manufacturer_name ? m.manufacturer_name + " / " : "";
         text.textContent = `${vh}${m.model_name} (${m.txCount}×${m.rxCount})`;
 
         const actions = document.createElement("div");
@@ -475,6 +605,9 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
   }
 
   // ===== Edit/Delete Modal =====
+  // (Hinweis: Für das Edit-Modal haben wir bereits Vendor/Model/Pattern/Counts/Labels/Notes.
+  //  Wenn du die neuen Felder (serial/mac/...) & model_params dort editierbar haben willst,
+  //  sag Bescheid – ich ergänze die UI-Felder & Bindings konsistent.)
   function openEditModal(modelId) {
     const list = load();
     const idx = list.findIndex((x) => x.id === modelId);
@@ -499,18 +632,14 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
     const fNotes = modal.querySelector("#libEditNotes");
     const fPattern = modal.querySelector("#libEditNamePattern");
 
-    fVendor.value = m.manufacturer || "";
-    fName.value = m.model_name || "";
-    fTx.value = String(m.txCount || 0);
-    fRx.value = String(m.rxCount || 0);
-    fTxLbl.value = (m.device_defaults.txchannels || [])
-      .map((c) => c.label)
-      .join(", ");
-    fRxLbl.value = (m.device_defaults.rxchannels || [])
-      .map((c) => c.name)
-      .join(", ");
-    fNotes.value = m.notes || "";
-    fPattern.value = m.device_defaults.name_pattern || DEFAULTS.name_pattern;
+    if (fVendor) fVendor.value = m.manufacturer_name || "";
+    if (fName)   fName.value   = m.model_name || "";
+    if (fTx)     fTx.value     = String(m.txCount || 0);
+    if (fRx)     fRx.value     = String(m.rxCount || 0);
+    if (fTxLbl)  fTxLbl.value  = (m.device_defaults.txchannels || []).map((c) => c.label).join(", ");
+    if (fRxLbl)  fRxLbl.value  = (m.device_defaults.rxchannels || []).map((c) => c.name).join(", ");
+    if (fNotes)  fNotes.value  = m.notes || "";
+    if (fPattern)fPattern.value= m.device_defaults.name_pattern || DEFAULTS.name_pattern;
 
     modal.style.display = "flex";
 
@@ -521,20 +650,15 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
     });
 
     const btnSave = modal.querySelector("#libEditSave");
-    btnSave.onclick = function () {
-      const txN = Math.max(0, parseInt(fTx.value || "0", 10) || 0);
-      const rxN = Math.max(0, parseInt(fRx.value || "0", 10) || 0);
+    if (btnSave) btnSave.onclick = function () {
+      const txN = Math.max(0, parseInt((fTx && fTx.value) || "0", 10) || 0);
+      const rxN = Math.max(0, parseInt((fRx && fRx.value) || "0", 10) || 0);
 
-      const txLabels = (fTxLbl.value || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length || s === "");
-      const rxLabels = (fRxLbl.value || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length || s === "");
+      const txLabels = ((fTxLbl && fTxLbl.value) || "")
+        .split(",").map((s) => s.trim()).filter((s) => s.length || s === "");
+      const rxLabels = ((fRxLbl && fRxLbl.value) || "")
+        .split(",").map((s) => s.trim()).filter((s) => s.length || s === "");
 
-      // Kanallisten in gewünschter Länge erzeugen (IDs 1..N, fehlende Labels auffüllen)
       const txchannels = Array.from({ length: txN }, (_, i) => ({
         danteId: String(i + 1),
         label: txLabels[i] || `${DEFAULTS.txLabelPrefix}${i + 1}`,
@@ -544,15 +668,15 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
         name: rxLabels[i] || `${DEFAULTS.rxNamePrefix}${i + 1}`,
       }));
 
-      m.manufacturer = (fVendor.value || "").trim();
-      m.model_name = (fName.value || "").trim();
-      m.device_defaults.name_pattern =
-        (fPattern.value || "").trim() || DEFAULTS.name_pattern;
+      m.manufacturer_name = (fVendor && fVendor.value || "").trim();
+      m.model_name        = (fName && fName.value || "").trim();
+      if (fPattern) {
+        m.device_defaults.name_pattern = (fPattern.value || "").trim() || DEFAULTS.name_pattern;
+      }
       m.device_defaults.txchannels = txchannels;
       m.device_defaults.rxchannels = rxchannels;
-      m.notes = (fNotes.value || "").trim();
+      m.notes = (fNotes && fNotes.value || "").trim();
 
-      // Counts aus Arrays ableiten
       m.txCount = txchannels.length;
       m.rxCount = rxchannels.length;
 
@@ -562,7 +686,7 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
     };
 
     const btnDel = modal.querySelector("#libEditDelete");
-    btnDel.onclick = function () {
+    if (btnDel) btnDel.onclick = function () {
       if (!confirm("Eintrag wirklich löschen?")) return;
       list.splice(idx, 1);
       save(list);
@@ -576,6 +700,6 @@ tdLabels.textContent = (txs || "(keine)") + " | " + (rxs || "(keine)");
     openAdoptWizard,
     renderSidebarInto,
     _forceRenderSidebar: requestRenderSidebar,
-    makeDeviceXml, // für „Gerät hinzufügen“
+    makeDeviceXml,
   };
 })();
