@@ -492,11 +492,19 @@ window.DA_LIB = (function () {
         btn.textContent = isUnknown ? "Übernehmen" : "Schon in Lib";
         btn.disabled = !isUnknown;
         btn.onclick = function () {
-          const model = addModelFromFP(row.fp);
-          row.modelId = model.id;
-          render();
-          requestRenderSidebar();
-        };
+  // 1) Modell in die Library übernehmen (mit Dedupe)
+  const model = addModelFromFP(row.fp);
+
+  // 2) Alle Reihen neu gegen die Library prüfen
+  //    -> auch weitere identische Geräte werden als "Schon in Lib" erkannt
+  devices.forEach(function (r) {
+    r.modelId = findExistingModelId(r.fp);
+  });
+
+  // 3) UI aktualisieren
+  render();
+  requestRenderSidebar();
+};
         tdAct.appendChild(btn);
 
         [tdKnown, tdDev, tdCounts, tdLabels, tdVendor, tdModel, tdAct].forEach(
