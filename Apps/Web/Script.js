@@ -1,27 +1,24 @@
 // Apps/Web/Script.js
 
-// ---- Config ----
+// ---- Config & Keys ----
 var HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan" };
-
-// ---- Storage Keys ----
 var SKEY_XML  = "DA_PRESET_XML";
-var SKEY_META = "DA_PRESET_META"; // { ts: <number> }
-function nowTs(){ return Date.now(); }
+var SKEY_META = "DA_PRESET_META";
 
-// ---- State ----
-var lastXmlDoc = null;
-var helperState = "disconnected";   // "connected" | "connecting" | "disconnected"
-var lastHelperState = null;
-var backoff = 1000, maxBackoff = 30000, timer = null;
-
-// Spinner-Handling (robust, auch bei parallelen Checks)
-var activeChecks = 0;
-function beginCheck(){ activeChecks++; setSpinner(true); }
-function endCheck(){ activeChecks = Math.max(0, activeChecks - 1); if(activeChecks === 0) setSpinner(false); }
-
-// ---- DOM helpers ----
-function $(sel){ return document.querySelector(sel); }
+function $(s){ return document.querySelector(s); }
 function rowHtml(cols){ return "<tr>" + cols.map(function(c){ return "<td>"+c+"</td>"; }).join("") + "</tr>"; }
+function parseXml(text){
+  var p = new DOMParser(); var xml = p.parseFromString(text, "application/xml");
+  var err = xml.querySelector("parsererror"); if(err) throw new Error("XML Parser Error: " + err.textContent);
+  return xml;
+}
+function serializeWithHeader(xml){
+  var s = new XMLSerializer().serializeToString(xml).replace(/^<\?xml[^>]*\?>\s*/i,"");
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
+}
+
+// ---- Global State ----
+var lastXmlDoc = null;
 
 // ---- Statusbar helpers ----
 function setLed(state){
@@ -31,46 +28,42 @@ function setLed(state){
   else if(state === "connecting") led.classList.add("yellow");
   else led.classList.add("red");
 }
-function setStatusText(txt){ var t = $("#statusText"); if(t) t.textContent = txt; }
-function setSpinner(active){ var sp = $("#statusSpinner"); if(sp){ if(active) sp.classList.add("active"); else sp.classList.remove("active"); } }
-function setTimestamp(ts){ var el = $("#statusTimestamp"); if(el){ el.textContent = ts ? ("Stand: " + new Date(ts).toLocaleTimeString()) : ""; } }
+function setStatusText(txt){ var t=$("#statusText"); if(t) t.textContent=txt; }
+function setSpinner(active){ var sp=$("#statusSpinner"); if(!sp) return; if(active) sp.classList.add("active"); else sp.classList.remove("active"); }
+function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent = ts ? ("Stand: "+new Date(ts).toLocaleTimeString()) : ""; }
 
-function setState(newState, options){
-  options = options || { announceWhenDone:true };
-  if(newState !== lastHelperState){
-    if(options.announceWhenDone){
-      setLed(newState);
-      if(newState === "connected") setStatusText("Online-Scan aktiv");
-      else if(newState === "connecting") setStatusText("Verbinde…");
-      else setStatusText("Offline");
-      lastHelperState = newState;
+// ---- Page Layout: Sidebar aktivieren, ohne Statusbar zu verschieben ----
+(function enableRightSidebar(){
+  try { document.body.classList.add("with-right-sidebar"); } catch(_) {}
+  // Sidebar-Resizer
+  (function makeRightSidebarResizable(){
+    var sidebar = $("#rightSidebar"), resizer = $("#sidebarResizer");
+    if(!sidebar || !resizer) return;
+    function onMove(e){
+      var rect = sidebar.getBoundingClientRect();
+      var newW = Math.min(Math.max(rect.right - e.clientX, 260), window.innerWidth*0.6);
+      sidebar.style.width = newW+"px";
+      // Nur den Hauptinhalt schieben – Statusbar bleibt full-width
+      var main = $("#mainContent"); if(main) main.style.marginRight = newW+"px";
     }
-  }
-  helperState = newState;
-}
-
-// ---- XML helpers ----
-function parseXml(text){
-  var p = new DOMParser();
-  var xml = p.parseFromString(text, "application/xml");
-  var err = xml.querySelector("parsererror");
-  if(err) throw new Error("XML Parser Error: " + err.textContent);
-  return xml;
-}
-function serializeWithHeader(xml){
-  var s = new XMLSerializer().serializeToString(xml).replace(/^<\?xml[^>]*\?>\s*/i,"");
-  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
-}
+    function onUp(){ document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
+    resizer.addEventListener("mousedown", function(e){
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      e.preventDefault();
+    });
+  })();
+})();
 
 // ---- Tables ----
 function fillPresetTable(xml){
   var tbody = $("#presetTable tbody"); if(!tbody) return;
   tbody.innerHTML = "";
 
-  var devices = Array.prototype.slice.call(xml.querySelectorAll("preset > device"));
-  if(devices.length === 0) devices = Array.prototype.slice.call(xml.querySelectorAll("device"));
+  var devs = Array.prototype.slice.call(xml.querySelectorAll("preset > device"));
+  if(devs.length === 0) devs = Array.prototype.slice.call(xml.querySelectorAll("device"));
 
-  devices.forEach(function(d){
+  devs.forEach(function(d){
     var nameEl = d.querySelector("name");
     var name = nameEl && nameEl.textContent ? nameEl.textContent.trim() : "(ohne Name)";
     var tx = d.querySelectorAll("txchannel").length;
@@ -78,8 +71,8 @@ function fillPresetTable(xml){
     tbody.insertAdjacentHTML("beforeend", rowHtml([name, tx, rx]));
   });
 
-  var btn = $("#btnExport");
-  if(btn) btn.disabled = devices.length === 0;
+  var be = $("#btnExport"); if(be) be.disabled = devs.length === 0;
+  var bm = $("#btnMatrix"); if(bm) bm.disabled = devs.length === 0;
 }
 
 function fillOnlineTable(list){
@@ -94,107 +87,43 @@ function fillOnlineTable(list){
   var oi=$("#onlineInfo"); if(oi) oi.textContent = (list && list.length) ? "Gefundene Geräte" : "Keine Geräte gefunden";
 }
 
-function fillLibTable(){
-  var tbody = $("#libTable tbody"); if(!tbody) return;
-  tbody.innerHTML="";
-  var lib = [
-    { model:"Generic-32x16", tx:32, rx:16 },
-    { model:"Generic-16x16", tx:16, rx:16 }
-  ];
-  lib.forEach(function(m){ tbody.insertAdjacentHTML("beforeend", rowHtml([m.model, m.tx, m.rx])); });
-}
-
-// ---- Storage Helpers (VERSIONIERT & streng Session-bezogen) ----
+// ---- Storage Helpers ----
 function writePresetToSession(xmlString){
-  var ts = nowTs();
   try { sessionStorage.setItem(SKEY_XML,  xmlString); } catch(_) {}
-  try { sessionStorage.setItem(SKEY_META, JSON.stringify({ ts: ts })); } catch(_) {}
-  // für Navigation zusätzlich window.name (gleicher Stand)
-  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xmlString, ts: ts }); } catch(_) {}
+  try { sessionStorage.setItem(SKEY_META, JSON.stringify({ ts: Date.now() })); } catch(_) {}
+  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xmlString, ts: Date.now() }); } catch(_) {}
 }
-
-function writePresetToLocal(xmlString){
-  var ts = nowTs();
-  try { localStorage.setItem(SKEY_XML,  xmlString); } catch(_) {}
-  try { localStorage.setItem(SKEY_META, JSON.stringify({ ts: ts })); } catch(_) {}
-}
-
 function readFromSession(){
-  var xml = null, meta = null;
-  try { xml  = sessionStorage.getItem(SKEY_XML); } catch(_) {}
-  try { meta = sessionStorage.getItem(SKEY_META); } catch(_) {}
-  return { xml: xml, meta: meta ? JSON.parse(meta) : null };
+  var xml = null; try { xml = sessionStorage.getItem(SKEY_XML); } catch(_) {}
+  return xml;
 }
 
-function readFromWindowName(){
-  if(!window.name) return { xml:null, meta:null };
-  try{
-    var payload = JSON.parse(window.name);
-    if(payload && payload.type === "DA_PRESET" && payload.xml){
-      return { xml: String(payload.xml), meta: payload.ts ? { ts: payload.ts } : null };
-    }
-  }catch(_){}
-  return { xml:null, meta:null };
-}
-
-// ---- Cold-Boot-Cleanup ----
-// Wenn wir die Startseite OHNE via-Hash öffnen ⇒ alte Session-Daten entfernen.
-// (localStorage bleibt unberührt, wird nicht autogeladen)
-(function coldBootCleanup(){
-  var via = (location.hash||"").indexOf("via=") >= 0;
-  if(!via){
-    try { sessionStorage.removeItem(SKEY_XML); } catch(_) {}
-    try { sessionStorage.removeItem(SKEY_META); } catch(_) {}
-    try { window.name = ""; } catch(_) {}
-  }
+// ---- Datei laden → Session + UI ----
+(function bindFileInput(){
+  var fi = $("#fileInput"); if(!fi) return;
+  fi.addEventListener("change", function(e){
+    var f = e.target && e.target.files ? e.target.files[0] : null; if(!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      try{
+        var t = String(ev.target.result || "");
+        var doc = parseXml(t);
+        lastXmlDoc = doc;
+        fillPresetTable(lastXmlDoc);
+        var xml = new XMLSerializer().serializeToString(lastXmlDoc);
+        writePresetToSession(xml);
+      }catch(err){ alert(err.message || String(err)); }
+    };
+    reader.readAsText(f);
+  });
 })();
 
-// ---- File handlers (NEU: schreibt immer frischen Stand in Session + window.name + optional Local) ----
-var fi = $("#fileInput");
-if(fi){
-  fi.addEventListener("change", function(e){
-    try{
-      var f = e.target && e.target.files ? e.target.files[0] : null;
-      if(!f) return;
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        try{
-          var t = String(ev.target.result || "");
-          var doc = parseXml(t);
-
-          // UI
-          lastXmlDoc = doc;
-          fillPresetTable(lastXmlDoc);
-
-          // Storage (Session + window.name; Local optional zum „manuellen“ Fortsetzen)
-          var xml = new XMLSerializer().serializeToString(lastXmlDoc);
-          writePresetToSession(xml);
-          // Optional: wenn du bewusst den letzten Stand über Browser-Neustarts erhalten willst:
-          // writePresetToLocal(xml);
-
-          // Buttons freischalten
-          var bm = $("#btnMatrix"); if (bm) bm.disabled = false;
-          var be = $("#btnExport"); if (be) be.disabled = false;
-
-        }catch(err){
-          alert(err.message || String(err));
-        }
-      };
-      reader.readAsText(f);
-    }catch(err){
-      alert(err.message || String(err));
-    }
-  });
-}
-
 // ---- Export ----
-var be = $("#btnExport");
-if(be){
+(function bindExport(){
+  var be = $("#btnExport"); if(!be) return;
   be.addEventListener("click", function(){
-    // falls aus Session statt live-Doc exportiert werden muss
     if(!lastXmlDoc){
-      var ss = readFromSession();
-      if(ss.xml){ try { lastXmlDoc = parseXml(ss.xml); } catch(_) {} }
+      var s = readFromSession(); if(s){ try{ lastXmlDoc = parseXml(s); }catch(_){} }
     }
     if(!lastXmlDoc){ alert("Bitte zuerst ein Preset laden."); return; }
     var content = serializeWithHeader(lastXmlDoc);
@@ -206,222 +135,63 @@ if(be){
     a.click();
     setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
   });
-}
+})();
 
-// ---- Helper discovery (optional, resilient) ----
-function ping(timeout){
-  if(typeof timeout!=="number") timeout=600;
-  beginCheck();
-  var ctrl = new AbortController();
-  var to = setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, timeout);
-  return fetch(HELPER.base+HELPER.health, {signal: ctrl.signal, cache:"no-store"})
-    .then(function(r){ return r.ok ? r.json() : {ok:false}; })
-    .then(function(j){ return j && j.ok === true; })
-    .catch(function(){ return false; })
-    .finally(function(){ clearTimeout(to); endCheck(); });
-}
-function scan(timeout){
-  if(typeof timeout!=="number") timeout=1200;
-  beginCheck();
-  var ctrl = new AbortController();
-  var to = setTimeout(function(){ try{ ctrl.abort(); }catch(e){} }, timeout);
-  return fetch(HELPER.base+HELPER.scan, {signal: ctrl.signal, cache:"no-store"})
-    .then(function(r){ if(!r.ok) return null; return r.json(); })
-    .then(function(j){ if(j) { fillOnlineTable(j); setTimestamp(Date.now()); } })
-    .catch(function(){ /* noop */ })
-    .finally(function(){ clearTimeout(to); endCheck(); });
-}
-function scheduleRetry(){
-  clearTimeout(timer);
-  var jitter = Math.floor(Math.random()*0.25*backoff);
-  var wait = Math.min(backoff+jitter, maxBackoff);
-  timer = setTimeout(connect, wait);
-  backoff = Math.min(backoff*2, maxBackoff);
-}
-function connect(){
-  setState("connecting", {announceWhenDone:false});
-  ping(600).then(function(ok){
-    if(ok){
-      setState("connected");
-      backoff = 1000;
-      return scan(1200).then(function(){
-        clearTimeout(timer);
-        timer = setTimeout(loop, 4000);
-      });
-    }else{
-      setState("disconnected");
-      scheduleRetry();
-    }
-  });
-}
-function loop(){
-  if(helperState!=="connected") return;
-  ping(600).then(function(ok){
-    if(!ok){ setState("disconnected"); return scheduleRetry(); }
-    scan(1000).then(function(){
-      clearTimeout(timer);
-      timer = setTimeout(loop, 4000);
-    });
-  });
-}
-
-// Re-Checks
-window.addEventListener("focus", function(){ if(helperState==="connected") scan(800); else connect(); }, {passive:true});
-document.addEventListener("visibilitychange", function(){
-  if(document.visibilityState==="visible"){
-    if(helperState==="connected") scan(800); else connect();
-  }
-}, {passive:true});
-window.addEventListener("online", function(){ connect(); }, {passive:true});
-
-// ---- Init ----
-try { fillLibTable(); } catch(e) {}
-try { connect(); } catch(e) {}
-
-// ---- Matrix-Button: immer frisch aus Session/lastXmlDoc schreiben ----
-(function () {
-  var bm = document.getElementById("btnMatrix");
-  if (!bm) return;
-
-  function enableIfAvailable(){
-    var ss = readFromSession();
-    bm.disabled = !( (ss.xml && ss.xml.trim()) || lastXmlDoc );
-  }
-  enableIfAvailable();
-
-  bm.onclick = function () {
+// ---- Matrix Navigation (immer frischen Stand schreiben) ----
+(function bindMatrix(){
+  var bm = $("#btnMatrix"); if(!bm) return;
+  bm.addEventListener("click", function(){
     var xml = null;
-    if (lastXmlDoc) {
-      xml = new XMLSerializer().serializeToString(lastXmlDoc);
-    } else {
-      var ss = readFromSession();
-      xml = ss.xml || null;
-    }
-    if (!xml) { alert("Kein Preset geladen."); return; }
-
-    // FRISCH in Session & window.name schreiben und via-Hash setzen
+    if(lastXmlDoc) xml = new XMLSerializer().serializeToString(lastXmlDoc);
+    if(!xml) xml = readFromSession();
+    if(!xml){ alert("Kein Preset geladen."); return; }
     writePresetToSession(xml);
     location.href = "./Matrix.html#via=btn";
-  };
-})();
-
-// --- Safe Autoload: nur Session, nur wenn via=matrix/btn, niemals aus Local automatisch ---
-(function safeAutoloadFromSession(){
-  try {
-    var via = (location.hash||"").match(/via=(\w+)/);
-    if(!via){ return; } // nur wenn wir gezielt zurückkommen
-    if (typeof lastXmlDoc !== "undefined" && lastXmlDoc) return;
-
-    var ss = readFromSession();
-    if (ss.xml && ss.xml.trim()) {
-      var doc = new DOMParser().parseFromString(ss.xml, "application/xml");
-      var err = doc.querySelector("parsererror");
-      if (!err) {
-        lastXmlDoc = doc;
-        fillPresetTable(lastXmlDoc);
-        var bm = document.getElementById("btnMatrix"); if (bm) bm.disabled = false;
-        var be = document.getElementById("btnExport"); if (be) be.disabled = false;
-      }
-    }
-  } catch (e) {
-    console.warn("safeAutoloadFromSession skipped:", e);
-  }
-})();
-
-// --- Bibliothek Sidebar initial zeichnen + Zahnrad-Klick binden ---
-window.renderLibrarySidebar = function(){
-  var cont = document.getElementById("libSidebarBody");
-  if(!cont || !window.DA_LIB) return;
-  window.DA_LIB.renderSidebarInto(cont);
-};
-try{ window.renderLibrarySidebar(); }catch(_){}
-
-(function(){
-  var btn = document.getElementById("btnLibWizard");
-  if(!btn || !window.DA_LIB) return;
-  btn.addEventListener("click", function(){
-    // aktuelle Preset-Quelle: bevorzugt lastXmlDoc, sonst Session
-    var xmlDoc = window.lastXmlDoc;
-    if(!xmlDoc){
-      try{
-        var s = sessionStorage.getItem("DA_PRESET_XML");
-        if(s){ xmlDoc = new DOMParser().parseFromString(s, "application/xml"); }
-      }catch(_){}
-    }
-    if(!xmlDoc){
-      alert("Kein Preset geladen.");
-      return;
-    }
-    window.DA_LIB.openAdoptWizard(xmlDoc);
   });
 })();
 
-// --- Sidebar aktivieren: Body rechts freiräumen ---
-(function enableRightSidebarLayout(){
-  try { document.body.classList.add("with-right-sidebar"); } catch(_) {}
+// ---- Online-Helper (optional; Mock) ----
+(function mockOnline(){
+  // hier ggf. deine echte Health/Scan-Logik anbinden
+  setLed("disconnected"); setStatusText("Offline"); setSpinner(false);
 })();
 
-// --- Library in Sidebar rendern ---
+// ---- Bibliothek in Sidebar rendern + Wizard-Buttons robust binden ----
 window.renderLibrarySidebar = function(){
   if (!window.DA_LIB) return;
-  var cont = document.getElementById("libSidebarBody");
-  if (!cont) return;
+  var cont = $("#libSidebarBody"); if(!cont) return;
   window.DA_LIB.renderSidebarInto(cont);
 };
-
-// initial zeichnen (falls Lib vorhanden)
 try { window.renderLibrarySidebar(); } catch(_){}
 
-// --- Zahnrad/Wizard binden ---
-(function attachLibWizardButton(){
-  if (!window.DA_LIB) return;
-  var btn = document.getElementById("btnLibWizard");
-  if (!btn) return;
-
-  btn.addEventListener("click", function(){
-    // Quelle: bevorzugt RAM, sonst SessionStorage
+(function robustBindLibWizard(){
+  function openWizardFromCurrentPreset(){
     var xmlDoc = window.lastXmlDoc;
     if (!xmlDoc) {
-      try {
-        var s = sessionStorage.getItem("DA_PRESET_XML");
-        if (s) xmlDoc = new DOMParser().parseFromString(s, "application/xml");
-      } catch(_) {}
+      try { var s = readFromSession(); if(s) xmlDoc = new DOMParser().parseFromString(s, "application/xml"); } catch(_) {}
     }
-    if (!xmlDoc) {
-      alert("Kein Preset geladen.");
-      return;
-    }
+    if (!xmlDoc) { alert("Kein Preset geladen."); return; }
+    if (!window.DA_LIB || !window.DA_LIB.openAdoptWizard) { alert("Library-Modul (Lib.js) nicht geladen."); return; }
     window.DA_LIB.openAdoptWizard(xmlDoc);
-  });
-})();
-
-// --- Resizing für Sidebar (drag left edge) ---
-(function makeRightSidebarResizable(){
-  var sidebar = document.getElementById("rightSidebar");
-  var resizer = document.getElementById("sidebarResizer");
-  if (!sidebar || !resizer) return;
-
-  var startX = 0;
-  var startWidth = 0;
-  var startBodyMargin = 0;
-
-  function onMouseMove(e){
-    var dx = startX - e.clientX; // nach links ziehen = breiter
-    var newWidth = Math.min(Math.max(startWidth + dx, 260), window.innerWidth * 0.6);
-    sidebar.style.width = newWidth + "px";
-    // body-margin rechts anpassen, damit Content nicht überdeckt
-    document.body.style.marginRight = newWidth + "px";
   }
-  function onMouseUp(){
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
+  function bindOnce(id){
+    var btn = document.getElementById(id);
+    if(!btn) return false;
+    btn.replaceWith(btn.cloneNode(true));
+    btn = document.getElementById(id);
+    btn.addEventListener("click", openWizardFromCurrentPreset);
+    return true;
   }
-  resizer.addEventListener("mousedown", function(e){
-    startX = e.clientX;
-    startWidth = sidebar.getBoundingClientRect().width;
-    startBodyMargin = parseFloat(getComputedStyle(document.body).marginRight) || startWidth;
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    e.preventDefault();
-  });
+  // Button in Card und in Sidebar unterstützen
+  var ok1 = bindOnce("btnLibWizard");
+  var ok2 = bindOnce("btnLibWizardSidebar");
+
+  if (!ok1 || !ok2) {
+    document.addEventListener("DOMContentLoaded", function(){ bindOnce("btnLibWizard"); bindOnce("btnLibWizardSidebar"); }, {once:true});
+    var tries=0, t=setInterval(function(){
+      tries++; var a=bindOnce("btnLibWizard"), b=bindOnce("btnLibWizardSidebar");
+      if((a||b) && window.DA_LIB){ clearInterval(t); }
+      if(tries>10) clearInterval(t);
+    },150);
+  }
 })();

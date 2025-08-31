@@ -1,0 +1,67 @@
+/* Layout */
+*{ box-sizing: border-box; }
+body{ margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:#222; }
+.main{ padding:16px 16px 70px 16px; } /* unten Platz für Statusbar */
+.topbar{ display:flex; align-items:center; padding:6px 4px 12px; border-bottom:1px solid #eee; }
+.content{ display:grid; grid-template-columns: 1fr; gap:16px; max-width:1200px; }
+
+/* Cards */
+.card{ border:1px solid #e5e5e5; border-radius:10px; background:#fff; }
+.card-header{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #eee; }
+.card-title{ font-weight:600; }
+.card-actions .btn{ margin-left:8px; }
+.card-body{ padding:10px 12px; }
+
+/* Tables */
+.table{ width:100%; border-collapse:collapse; }
+.table th, .table td{ border:1px solid #e9e9e9; padding:6px 8px; text-align:left; }
+.table thead th{ background:#f7f7f7; }
+
+/* Buttons */
+.btn{ border:1px solid #ccc; background:#f7f7f7; border-radius:6px; padding:6px 10px; cursor:pointer; }
+.btn:hover{ background:#f0f0f0; }
+
+/* Muted text */
+.muted{ color:#666; }
+
+/* Statusbar (fixiert, volle Breite) */
+.statusbar{
+  position:fixed; left:0; right:0; bottom:0;
+  height:46px; background:#fff; border-top:1px solid #e5e5e5;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 12px; z-index:950;
+}
+.status-left{ display:flex; align-items:center; gap:8px; }
+.led{ width:10px; height:10px; border-radius:50%; display:inline-block; background:#bbb; }
+.led.green{ background:#1bb34b; } .led.yellow{ background:#f4b400; } .led.red{ background:#d93025; }
+.spinner{ display:inline-block; width:16px; height:16px; border:2px solid #ddd; border-top-color:#888; border-radius:50%; animation:spin 1s linear infinite; opacity:0; }
+.spinner.active{ opacity:1; }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+
+/* Sidebar rechts */
+.sidebar{
+  position:fixed; top:0; right:0; height:100dvh;
+  width:320px; min-width:260px; max-width:60vw;
+  background:#fff; border-left:1px solid #e5e5e5;
+  display:flex; flex-direction:column; z-index:900;
+}
+.sidebar-header{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #eaeaea; }
+.sidebar-title{ font-weight:600; }
+.sidebar-body{ padding:10px 12px; overflow:auto; flex:1 1 auto; }
+.sidebar-body .lib-item{ padding:6px 0; border-bottom:1px dashed #eee; }
+.sidebar-body .lib-item:last-child{ border-bottom:none; }
+.sidebar-footer{ border-top:1px solid #eaeaea; padding:8px 12px; }
+.sidebar-resizer{ position:absolute; left:-6px; top:0; width:6px; height:100%; cursor:col-resize; background:transparent; }
+.sidebar-resizer:hover{ background:rgba(0,0,0,.05); }
+
+/* Main Content Platz rechts neben Sidebar */
+body.with-right-sidebar .main{ margin-right:320px; }
+
+/* Modal (Wizard) */
+.modal{ position:fixed; inset:0; background:rgba(0,0,0,.25); display:flex; align-items:center; justify-content:center; z-index:9999; }
+.modal-card{ background:#fff; width:min(980px,95vw); max-height:90vh; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,.25); display:flex; flex-direction:column; }
+.modal-header{ padding:10px 12px; border-bottom:1px solid #e5e5e5; display:flex; align-items:center; gap:10px; }
+.modal-title{ font-weight:600; }
+.modal-actions{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+.modal-body{ padding:10px 12px; overflow:auto; }
+.chk{ font-size:13px; display:inline-flex; align-items:center; gap:6px; }

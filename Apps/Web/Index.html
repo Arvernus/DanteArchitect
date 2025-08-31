@@ -2,266 +2,133 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
+  <title>Dante Architect – Preset Editor</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dante Architect – Web</title>
-  <link rel="manifest" href="./manifest.webmanifest">
-  <style>
-    :root { --gap: 12px; --card-border: #ddd; --muted:#666; --bg:#fff; --statusbar:#fafafa; }
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      margin: 0; background: var(--bg);
-      color: #111;
-      height: 100dvh; display: flex; flex-direction: column;
-    }
-    header {
-      padding: 12px 16px; border-bottom: 1px solid var(--card-border);
-      display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-    }
-    header h1 { margin: 0; font-size: 18px; }
-    .content {
-      flex: 1 1 auto; display: flex; min-height: 0; /* for proper flex scrolling */
-    }
-    .main { flex: 1 1 auto; min-width: 300px; padding: var(--gap); display: grid; grid-template-columns: 1fr; gap: var(--gap); overflow: auto; }
-    .sidebar {
-      width: 28vw; min-width: 240px; max-width: 70vw;
-      border-left: 1px solid var(--card-border);
-      padding: var(--gap);
-      resize: horizontal; overflow: auto; /* <- resizable sidebar */
-      background: #fcfcfc;
-    }
-    .card { border: 1px solid var(--card-border); border-radius: 8px; background: white; }
-    .card > .card-head {
-      padding: 10px 12px; border-bottom: 1px solid var(--card-border);
-      display:flex; align-items:center; justify-content: space-between; gap: 10px;
-    }
-    .card > .card-head h2 { margin: 0; font-size: 16px; }
-    .card > .card-body { padding: 8px 12px; }
-    .muted { color: var(--muted); font-size: 12px; }
-
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    thead th { position: sticky; top: 0; background: #f7f7f7; }
-    th, td { border: 1px solid var(--card-border); padding: 6px 8px; text-align: left; }
-
-    hr.sep { border: none; border-top: 1px dashed #ccc; margin: 8px 0; }
-
-    /* Buttons */
-    .btn {
-      appearance: none; border: 1px solid #bbb; background: #f7f7f7; padding: 6px 10px;
-      border-radius: 6px; cursor: pointer; font-size: 14px;
-    }
-    .btn:disabled { opacity: .55; cursor: default; }
-
-    /* Status bar bottom */
-    .statusbar {
-      border-top: 1px solid var(--card-border);
-      background: var(--statusbar);
-      padding: 6px 10px; display:flex; align-items:center; gap:10px;
-      font-size: 13px;
-    }
-    .led { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #888; background: #bbb; }
-    .led.green { background: #27c24c; border-color:#19953a; }
-    .led.yellow{ background: #f6c343; border-color:#d4a324; }
-    .led.red   { background: #f26d6d; border-color:#c24a4a; }
-
-    .spinner {
-      width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #666;
-      border-radius: 50%; display:inline-block; animation: spin 0.8s linear infinite;
-      visibility: hidden;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner.active { visibility: visible; }
-/* --- Sidebar Layout --- */
-.sidebar {
-  position: fixed;
-  top: 0;
-  right: 0;
-  height: 100dvh; /* mobile-safe */
-  width: 320px;            /* Startbreite */
-  max-width: 60vw;
-  min-width: 260px;
-  background: #fff;
-  border-left: 1px solid #e5e5e5;
-  display: flex;
-  flex-direction: column;
-  z-index: 900;            /* unter dem Wizard-Modal bleiben */
-}
-
-/* Wenn dein Main-Content full-width ist: gib ihm rechts Platz */
-body.with-right-sidebar {
-  margin-right: 320px;     /* gleiche Startbreite wie .sidebar */
-}
-
-/* Header */
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eaeaea;
-}
-.sidebar-title { font-weight: 600; }
-.sidebar-actions .btn {
-  font-size: 14px;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-/* Body */
-.sidebar-body {
-  padding: 10px 12px;
-  overflow: auto;
-  flex: 1 1 auto;
-}
-
-/* Library-Items */
-.sidebar-body .lib-item {
-  padding: 6px 0;
-  border-bottom: 1px dashed #eee;
-  font-size: 14px;
-}
-.sidebar-body .lib-item:last-child { border-bottom: none; }
-
-/* Footer */
-.sidebar-footer {
-  border-top: 1px solid #eaeaea;
-  padding: 8px 12px;
-}
-.muted { color: #666; font-size: 12px; }
-
-/* Resizer */
-.sidebar-resizer {
-  position: absolute;
-  left: -6px;
-  top: 0;
-  width: 6px;
-  height: 100%;
-  cursor: col-resize;
-  background: transparent;
-}
-.sidebar-resizer:hover { background: rgba(0,0,0,.05); }
-
-/* Kleine Buttons vereinheitlichen (falls noch nicht vorhanden) */
-.btn {
-  border: 1px solid #ccc;
-  background: #f7f7f7;
-  border-radius: 6px;
-  padding: 6px 10px;
-}
-.btn:hover { background: #f0f0f0; }
-  </style>
+  <link href="./styles.css" rel="stylesheet">
 </head>
 <body>
-  <header>
-    <h1>Dante Architect – Web</h1>
-    <input id="fileInput" type="file" accept=".xml" />
-    <button id="btnMatrix" class="btn" disabled>Mapping Matrix</button>
-  </header>
 
-  <div class="content">
-    <section class="main">
-      <!-- ONLINE -->
-      <div class="card" id="onlineCard">
-        <div class="card-head">
-          <h2>Online</h2>
-          <span class="muted" id="onlineInfo">Helper nicht verbunden – arbeite offline</span>
-        </div>
-        <div class="card-body">
-          <table id="onlineTable">
-            <thead><tr><th>Name</th><th>IP</th><th>Hersteller</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
+  <!-- Hauptinhalt -->
+  <div id="mainContent" class="main">
+    <header class="topbar">
+      <h1>Dante Architect</h1>
+    </header>
 
-      <!-- PRESET -->
-      <div class="card" id="presetCard">
-        <div class="card-head">
-          <h2>Preset</h2>
-          <div>
-            <button id="btnExport" class="btn" disabled>Export herunterladen</button>
+    <section class="content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Preset</div>
+          <div class="card-actions">
+            <input id="fileInput" type="file" accept=".xml,application/xml">
+            <button id="btnExport" class="btn" disabled>Export</button>
+            <button id="btnMatrix" class="btn" disabled>Mapping Matrix</button>
           </div>
         </div>
         <div class="card-body">
-          <!-- Überschriften + Trenner innerhalb der Preset-Ansicht -->
-          <div class="muted">Geräteübersicht</div>
-          <hr class="sep">
-          <table id="presetTable">
-            <thead><tr><th>Device</th><th>TX</th><th>RX</th></tr></thead>
+          <table id="presetTable" class="table">
+            <thead>
+              <tr><th>Gerätename</th><th>TX</th><th>RX</th></tr>
+            </thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Online</div>
+          <div class="card-actions"></div>
+        </div>
+        <div class="card-body">
+          <div id="onlineInfo" class="muted">Noch kein Scan</div>
+          <table id="onlineTable" class="table">
+            <thead>
+              <tr><th>Name</th><th>IP</th><th>Hersteller</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Bibliothek Card (nur als Fallback-Anzeige – echte Liste rechts in Sidebar) -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Bibliothek</div>
+          <div class="card-actions">
+            <button id="btnLibWizard" class="btn" title="Modelle aus Preset übernehmen">⚙️</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="libCardBody" class="muted">Siehe rechte Sidebar.</div>
+        </div>
+      </div>
     </section>
+  </div>
 
- <!-- ===== Right Sidebar: Library ===== -->
-<aside id="rightSidebar" class="sidebar">
-  <div class="sidebar-header">
-    <div class="sidebar-title">Bibliothek</div>
-    <div class="sidebar-actions">
-      <button id="btnLibWizard" class="btn" title="Modelle aus Preset übernehmen">⚙️</button>
+  <!-- Statusbar (fix am unteren Rand über volle Breite) -->
+  <footer id="statusbar" class="statusbar">
+    <div class="status-left">
+      <span id="statusLed" class="led red"></span>
+      <span id="statusText">Offline</span>
+      <span id="statusTimestamp" class="muted"></span>
     </div>
-  </div>
+    <div class="status-right">
+      <span id="statusSpinner" class="spinner"></span>
+    </div>
+  </footer>
 
-  <div id="libSidebarBody" class="sidebar-body">
-    <!-- Wird per JS gefüllt -->
-  </div>
+  <!-- Rechte Sidebar: Bibliothek -->
+  <aside id="rightSidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">Bibliothek</div>
+      <div class="sidebar-actions">
+        <button id="btnLibWizardSidebar" class="btn" title="Modelle aus Preset übernehmen">⚙️</button>
+      </div>
+    </div>
+    <div id="libSidebarBody" class="sidebar-body">
+      <!-- via JS -->
+    </div>
+    <div class="sidebar-footer">
+      <small class="muted">Modelle werden lokal im Browser gespeichert.</small>
+    </div>
+    <div id="sidebarResizer" class="sidebar-resizer" title="Breite anpassen"></div>
+  </aside>
 
-  <div class="sidebar-footer">
-    <small id="libSidebarFooterHint" class="muted">
-      Modelle werden lokal gespeichert (Browser).
-    </small>
-  </div>
-
-  <!-- Drag Handle (Breite verstellbar) -->
-  <div id="sidebarResizer" class="sidebar-resizer" title="Breite anpassen"></div>
-</aside>
-
-  <!-- Status bar unten -->
-  <div class="statusbar">
-    <div id="statusLed" class="led red" title="Helper-Status"></div>
-    <div id="statusText">Offline</div>
-    <div id="statusSpinner" class="spinner" title="Status wird aktualisiert…"></div>
-    <div class="muted" id="statusTimestamp"></div>
+  <!-- Übernahme-Wizard (Modal) -->
+  <div id="libWizardModal" class="modal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">Modelle übernehmen</div>
+        <div class="modal-actions">
+          <input id="libwizFilter" type="text" placeholder="Filter (Name, Labels, tx×rx …)">
+          <label class="chk"><input id="libwizUnknown" type="checkbox"> nur unbekannte</label>
+          <button id="libwizExport" class="btn">Export</button>
+          <button id="libwizImport" class="btn">Import</button>
+          <input id="libwizImportFile" type="file" accept=".json,application/json" style="display:none;">
+          <button class="btn" data-role="libwiz-close">Schließen</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="muted">Angezeigt: <span id="libwizCount">0</span></div>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Bekannt</th>
+              <th>Gerätename</th>
+              <th>Kanäle (TX×RX)</th>
+              <th>Labels (TX | RX)</th>
+              <th>Vendor</th>
+              <th>Modelname</th>
+              <th>Aktion</th>
+            </tr>
+          </thead>
+          <tbody id="libwizTbody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="./Script.js"></script>
   <script src="./Lib.js"></script>
-  <!-- wizard modal -->
-  <div id="libWizardModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.25); align-items:center; justify-content:center; z-index:9999;">
-  <div style="background:white; width:min(980px, 95vw); max-height:90vh; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,.25); display:flex; flex-direction:column;">
-    <div style="padding:12px 14px; border-bottom:1px solid #e5e5e5; display:flex; gap:12px; align-items:center;">
-      <div style="font-weight:600; font-size:16px;">Modelle übernehmen</div>
-      <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
-        <input id="libwizFilter" type="text" placeholder="Filter (Gerätename, Labels, tx×rx …)" style="padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:280px;">
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:13px;">
-          <input id="libwizUnknown" type="checkbox"> nur unbekannte
-        </label>
-        <button id="libwizExport" class="btn" title="Library exportieren">Export</button>
-        <button id="libwizImport" class="btn" title="Library importieren">Import</button>
-        <input id="libwizImportFile" type="file" accept=".json,application/json" style="display:none;">
-        <button class="btn" data-role="libwiz-close">Schließen</button>
-      </div>
-    </div>
-    <div style="padding:10px 14px; overflow:auto;">
-      <div style="font-size:12px; color:#666; margin-bottom:6px;">Angezeigt: <span id="libwizCount">0</span></div>
-      <table style="border-collapse:collapse; width:100%;">
-        <thead>
-          <tr style="background:#f7f7f7;">
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Bekannt</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Gerätename</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Kanäle (TX×RX)</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Labels (TX | RX)</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Vendor</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Modelname</th>
-            <th style="text-align:left; border:1px solid #e5e5e5; padding:6px 8px;">Aktion</th>
-          </tr>
-        </thead>
-        <tbody id="libwizTbody"></tbody>
-      </table>
-    </div>
-  </div>
-</div>
 </body>
 </html>
