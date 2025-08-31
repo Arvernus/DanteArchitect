@@ -2,7 +2,6 @@
 
 // --------- Konstanten ----------
 var SKEY_XML  = "DA_PRESET_XML";
-var SKEY_META = "DA_PRESET_META";
 
 // --------- Working State ----------
 var xmlDoc = null;
@@ -25,8 +24,6 @@ function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.classN
 function norm(s){ return (s||"").toLowerCase(); }
 function colKey(devIndex, chanId){ return chanId ? ("tx:"+devIndex+":"+chanId) : ("txdev:"+devIndex); }
 function rowKey(devIndex, chanId){ return chanId ? ("rx:"+devIndex+":"+chanId) : ("rxdev:"+devIndex); }
-function isFrozenColsMode(){ return !!frozenCols; }
-function isFrozenRowsMode(){ return !!frozenRows; }
 
 function readFromSession(){
   var xml = null; try { xml = sessionStorage.getItem(SKEY_XML); } catch(_) {}
@@ -45,53 +42,48 @@ function writeToSessionAndName(xml){
   try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml, ts: Date.now() }); } catch(_) {}
 }
 
+function parseXml(text){
+  var p = new DOMParser();
+  var doc = p.parseFromString(text, "application/xml");
+  var err = doc.querySelector("parsererror");
+  if(err) throw new Error("XML Parser Error: " + err.textContent);
+  return doc;
+}
+
 // --------- Init ----------
 (function init(){
   try{
     var xml = readFromSession();
     if(!xml || !xml.trim()){
       xml = readFromWindowName();
-      if(xml){
-        // Sync zurück in Session (einheitlicher Pfad)
-        writeToSessionAndName(xml);
-      }
+      if(xml){ writeToSessionAndName(xml); }
     }
 
     if (!xml || !xml.trim()){
       var hint = $("#hint");
-      if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zur Übersicht zurück und Preset laden.";
+      if(hint) hint.innerHTML = "⚠️ <span class='warn'>Kein Preset gefunden.</span> Bitte zurück zur Übersicht.";
       return;
     }
 
-    // XML parsen
-    var p = new DOMParser();
-    xmlDoc = p.parseFromString(xml, "application/xml");
-    var err = xmlDoc.querySelector("parsererror");
-    if(err){
-      var hi = $("#hint"); if(hi) hi.textContent = "XML Fehler: " + err.textContent;
-      return;
-    }
-
-    // Preset-Name in Chip
-    var pname = xmlDoc.querySelector("preset > name");
-    var chip = $("#presetNameChip");
-    if(pname && chip) chip.textContent = "Preset: " + pname.textContent;
+    xmlDoc = parseXml(xml);
 
     buildModel();
     renderMatrix();
     bindUI();
+
+    // Safety: beim Verlassen/Verstecken persistieren
+    window.addEventListener("beforeunload", persist, {capture:true});
+    window.addEventListener("pagehide", persist, {capture:true});
+
   }catch(e){
     var h = $("#hint");
     if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
-    console.error("Matrix init error:", e);
   }
 })();
 
 // --------- Model-Aufbau ----------
 function buildModel(){
-  devices = [];
-  cols = [];
-  rows = [];
+  devices = []; cols = []; rows = [];
 
   var devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("preset > device"));
   if(devEls.length === 0) devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("device"));
@@ -136,11 +128,10 @@ function buildModel(){
   });
 }
 
-// --------- Sichtbarkeitsbasis ----------
+// --------- Sichtbarkeitsbasis + Freeze ----------
 function computeVisibleBase(){
-  var fTxEl = $("#fTx"), fRxEl = $("#fRx");
-  var fTx = norm(fTxEl ? fTxEl.value : "");
-  var fRx = norm(fRxEl ? fRxEl.value : "");
+  var fTx = norm( $("#fTx") ? $("#fTx").value : "" );
+  var fRx = norm( $("#fRx") ? $("#fRx").value : "" );
 
   function deviceMatchesTx(dev){
     if(!fTx) return true;
@@ -186,11 +177,11 @@ function computeVisibleBase(){
   return { visCols: visCols, visRows: visRows };
 }
 
-function freezeVisible(current){
+function freezeVisible(base){
   var onlyCols = $("#onlyColsWithSubs");
   if(onlyCols && onlyCols.checked){
     var set = new Set();
-    current.visCols.forEach(function(c){
+    base.visCols.forEach(function(c){
       set.add(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
     });
     frozenCols = set;
@@ -199,7 +190,7 @@ function freezeVisible(current){
   var onlyRows = $("#onlyRowsWithSubs");
   if(onlyRows && onlyRows.checked){
     var setR = new Set();
-    current.visRows.forEach(function(r){
+    base.visRows.forEach(function(r){
       setR.add(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
     });
     frozenRows = setR;
@@ -210,8 +201,7 @@ function freezeVisible(current){
 function renderMatrix(){
   var thead = $("#thead"), tbody = $("#tbody");
   if(!thead || !tbody) return;
-  thead.innerHTML = "";
-  tbody.innerHTML  = "";
+  thead.innerHTML = ""; tbody.innerHTML  = "";
 
   var base = computeVisibleBase();
   var visCols = base.visCols.slice();
@@ -359,40 +349,23 @@ function renameDevice(span, kind, newName){
   var dev = devices[di];
   var oldName = (dev.name || "").trim();
   newName = (newName || "").trim();
-
   if (!newName || newName === oldName) return;
 
-  // 1) Device-Name im eigenen <device> aktualisieren
   var nameEl = dev.el.querySelector("name");
-  if (!nameEl) {
-    nameEl = xmlDoc.createElement("name");
-    dev.el.insertBefore(nameEl, dev.el.firstChild);
-  }
+  if (!nameEl) { nameEl = xmlDoc.createElement("name"); dev.el.insertBefore(nameEl, dev.el.firstChild); }
   nameEl.textContent = newName;
   dev.name = newName;
 
-  // 2) ALLE Subscriptions im gesamten Preset anpassen:
-  //    überall dort, wo subscribed_device == alter Name, auf neuen Namen umbiegen
+  // Referenzen in Subscriptions anpassen
   for (var r = 0; r < rows.length; r++) {
     var rxrow = rows[r];
     if ((rxrow.rx.subDev || "").trim() === oldName) {
-      // XML-Element holen/erzeugen
       var sd = rxrow.rx.el.querySelector("subscribed_device");
-      if (!sd) {
-        sd = xmlDoc.createElement("subscribed_device");
-        rxrow.rx.el.appendChild(sd);
-      }
+      if (!sd) { sd = xmlDoc.createElement("subscribed_device"); rxrow.rx.el.appendChild(sd); }
       sd.textContent = newName;
-
-      // Cache aktualisieren
       rxrow.rx.subDev = newName;
     }
   }
-
-  // Hinweis:
-  // - Es spielt keine Rolle, ob der Name in TX- oder RX-Header geändert wurde.
-  //   Wir sehen das Gerät "dev" als eine Entität und aktualisieren deshalb immer
-  //   alle Subscriptions, die auf den alten Namen zeigen.
 
   renderMatrix();
   persist();
@@ -413,6 +386,7 @@ function renameTxChannel(span, newLabel){
   labEl.textContent = newLabel;
   tx.label = newLabel;
 
+  // RX-Subs, die auf altes Label zeigten, umbiegen
   for(var r=0;r<rows.length;r++){
     var row = rows[r];
     if(row.rx.subDev === dev.name && row.rx.subChan === oldLabel){
@@ -481,14 +455,11 @@ function toggleSubscription(td){
   persist();
 }
 
-// --------- Persistenz (nur Session + window.name) ----------
+// --------- Persistenz ----------
 function persist(){
   try{
     var s = new XMLSerializer().serializeToString(xmlDoc);
-    try { sessionStorage.setItem(SKEY_XML, s); } catch(_) {}
-    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: s, ts: Date.now() }); } catch(_) {}
-    // Optional: wenn du dauerhaft sichern willst, zusätzlich localStorage:
-    // try { localStorage.setItem(SKEY_XML, s); } catch(_) {}
+    writeToSessionAndName(s);
   }catch(e){
     var h = $("#hint"); if(h) h.textContent = "Persist-Fehler: " + (e.message || String(e));
   }
@@ -508,7 +479,6 @@ function bindUI(){
 
   var chkRows = $("#onlyRowsWithSubs");
   var chkCols = $("#onlyColsWithSubs");
-
   if(chkRows){
     chkRows.addEventListener("change", function(e){
       if(e.target.checked){
@@ -519,7 +489,6 @@ function bindUI(){
       renderMatrix();
     });
   }
-
   if(chkCols){
     chkCols.addEventListener("change", function(e){
       if(e.target.checked){
@@ -543,9 +512,19 @@ function bindUI(){
     });
   }
 
+  // Speichern & zurück
   var back = $("#btnSaveBack");
   if(back){
     back.addEventListener("click", function(){
+      persist();  // sicher speichern
+      location.href = "./Index.html#via=matrix";
+    });
+  }
+
+  // Fallback „nur zurück“ (falls vorhanden)
+  var back2 = $("#btnBack");
+  if(back2){
+    back2.addEventListener("click", function(){
       persist();
       location.href = "./Index.html#via=matrix";
     });

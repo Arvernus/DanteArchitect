@@ -32,10 +32,9 @@ function setStatusText(txt){ var t=$("#statusText"); if(t) t.textContent=txt; }
 function setSpinner(active){ var sp=$("#statusSpinner"); if(!sp) return; if(active) sp.classList.add("active"); else sp.classList.remove("active"); }
 function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent = ts ? ("Stand: "+new Date(ts).toLocaleTimeString()) : ""; }
 
-// ---- Page Layout: Sidebar aktivieren, ohne Statusbar zu verschieben ----
+// ---- Layout: rechte Sidebar (schiebt nur #mainContent, nicht die Statusbar) ----
 (function enableRightSidebar(){
   try { document.body.classList.add("with-right-sidebar"); } catch(_) {}
-  // Sidebar-Resizer
   (function makeRightSidebarResizable(){
     var sidebar = $("#rightSidebar"), resizer = $("#sidebarResizer");
     if(!sidebar || !resizer) return;
@@ -43,7 +42,6 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
       var rect = sidebar.getBoundingClientRect();
       var newW = Math.min(Math.max(rect.right - e.clientX, 260), window.innerWidth*0.6);
       sidebar.style.width = newW+"px";
-      // Nur den Hauptinhalt schieben – Statusbar bleibt full-width
       var main = $("#mainContent"); if(main) main.style.marginRight = newW+"px";
     }
     function onUp(){ document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
@@ -150,13 +148,12 @@ function readFromSession(){
   });
 })();
 
-// ---- Online-Helper (optional; Mock) ----
+// ---- Online-Helper (Dummy) ----
 (function mockOnline(){
-  // hier ggf. deine echte Health/Scan-Logik anbinden
   setLed("disconnected"); setStatusText("Offline"); setSpinner(false);
 })();
 
-// ---- Bibliothek in Sidebar rendern + Wizard-Buttons robust binden ----
+// ---- Bibliothek Sidebar rendern + Wizard binden ----
 window.renderLibrarySidebar = function(){
   if (!window.DA_LIB) return;
   var cont = $("#libSidebarBody"); if(!cont) return;
@@ -182,10 +179,8 @@ try { window.renderLibrarySidebar(); } catch(_){}
     btn.addEventListener("click", openWizardFromCurrentPreset);
     return true;
   }
-  // Button in Card und in Sidebar unterstützen
   var ok1 = bindOnce("btnLibWizard");
   var ok2 = bindOnce("btnLibWizardSidebar");
-
   if (!ok1 || !ok2) {
     document.addEventListener("DOMContentLoaded", function(){ bindOnce("btnLibWizard"); bindOnce("btnLibWizardSidebar"); }, {once:true});
     var tries=0, t=setInterval(function(){
@@ -193,5 +188,22 @@ try { window.renderLibrarySidebar(); } catch(_){}
       if((a||b) && window.DA_LIB){ clearInterval(t); }
       if(tries>10) clearInterval(t);
     },150);
+  }
+})();
+
+// ---- Safe Autoload nach Rücksprung (#via=matrix) ----
+(function safeAutoloadAfterBack(){
+  try{
+    var via = (location.hash||"").indexOf("via=matrix") >= 0;
+    if(!via) return;
+    var s = readFromSession();
+    if(!s) return;
+    var doc = parseXml(s);
+    lastXmlDoc = doc;
+    fillPresetTable(lastXmlDoc);
+    var be = $("#btnExport"); if(be) be.disabled = false;
+    var bm = $("#btnMatrix"); if(bm) bm.disabled = false;
+  }catch(e){
+    console.warn("safeAutoloadAfterBack:", e);
   }
 })();
