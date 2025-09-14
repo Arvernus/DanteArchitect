@@ -154,7 +154,63 @@
     </div>
   </div>
 </div>
-  
+
+<!-- Replace-Device Modal -->
+<div id="replaceDeviceModal" class="modal" style="display:none;">
+  <div class="modal-card" style="width:min(820px,95vw);">
+    <div class="modal-header">
+      <div class="modal-title">Gerät ersetzen</div>
+      <div class="modal-actions">
+        <input id="repFilter" type="text" placeholder="Modell-Filter (Vendor/Model/Label)">
+        <button class="btn" data-role="rep-close">Schließen</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div id="repCurrent" class="muted" style="margin-bottom:8px;"></div>
+      <table class="table" id="repModelTable">
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Model</th>
+            <th>TX×RX</th>
+            <th>Pattern</th>
+            <th>Aktion</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div id="repConflictsWrap" style="display:none; margin-top:12px;">
+        <div class="muted" style="margin-bottom:6px;">
+          Inkompatible Abonnements (werden bei „Ersetzen“ verworfen):
+        </div>
+        <table class="table" id="repConflictsTable">
+          <thead>
+            <tr>
+              <th>RX-Gerät</th>
+              <th>RX-Kanal</th>
+              <th>↔︎</th>
+              <th>TX-Gerät</th>
+              <th>TX-Kanal</th>
+              <th>Grund</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-header" style="justify-content:flex-end; gap: 12px; align-items:center;">
+      <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
+        <input id="repRenameByPattern" type="checkbox">
+        Namen nach Pattern neu vergeben
+      </label>
+      <button class="btn" data-role="rep-cancel">Abbrechen</button>
+      <button class="btn" id="repDoReplace" disabled>Ersetzen & verwerfen</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- Lib.js MUSS VOR Script.js geladen werden // CACHE-BUST für Dev -->
 <script src="Lib.js?v=dev-V0.0.2"></script>
 <script src="Script.js?v=dev-V0.0.2"></script>

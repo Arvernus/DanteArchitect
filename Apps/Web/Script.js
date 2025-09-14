@@ -173,7 +173,18 @@ function fillPresetTable(xml){
         if (ok) deleteDeviceByName(name);
       }).catch(function(){ /* abgebrochen */ });
     });
-
+    // Menüeintrag: Gerät ersetzen
+    var btnReplace = document.createElement("button");
+    btnReplace.className = "menu-item";
+    btnReplace.type = "button";
+    btnReplace.textContent = "Gerät ersetzen";
+    btnReplace.addEventListener("click", function(){
+      closeAllMenus();
+      try { ensurePresetEnvelope(lastXmlDoc); } catch(_){}
+      openReplaceDeviceDialog(name);
+    });
+    
+    list.appendChild(btnReplace);
     list.appendChild(btnDelete);
     menu.appendChild(toggle);
     menu.appendChild(list);
@@ -349,6 +360,463 @@ function deleteDeviceByName(deviceName){
     console.error(err);
     alert(err.message || String(err));
   }
+}
+// ===== Replace-Device: Helpers =====
+function getDeviceElByName(doc, deviceName){
+  var devs = Array.prototype.slice.call(doc.getElementsByTagName("device"));
+  return devs.find(function(d){
+    var n = d.querySelector("name");
+    return n && n.textContent && n.textContent.trim() === deviceName;
+  }) || null;
+}
+
+// Eindeutigkeit prüfen (anderen gleichnamigen Device ausschließen können)
+function deviceNameExists(doc, name, excludeName){
+  var devs = Array.prototype.map.call(doc.getElementsByTagName('device'), function(d){
+    var n = d.querySelector('name');
+    return n && n.textContent ? n.textContent.trim() : '';
+  });
+  return devs.some(function(nm){
+    if (!nm) return false;
+    if (excludeName && nm === excludeName) return false;
+    return nm === name;
+  });
+}
+
+// Bei Bedarf eindeutigen Namen erzeugen (Pattern-basiert oder einfache -n-Anhängung)
+function ensureUniqueDeviceName(baseName, doc, excludeName, fallbackPattern){
+  if (!deviceNameExists(doc, baseName, excludeName)) return baseName;
+
+  // Prefer Pattern, falls vorhanden
+  var pat = fallbackPattern || 'Device-[n]';
+  if (typeof generateUniqueNameFromPattern === 'function') {
+    // generateUniqueNameFromPattern prüft das gesamte Doc → liefert freien Namen
+    return generateUniqueNameFromPattern(pat, doc);
+  }
+
+  // Fallback: einfache "-n" Anhängung
+  var n = 2;
+  var candidate = baseName + '-' + n;
+  while (deviceNameExists(doc, candidate, excludeName)) {
+    n++;
+    candidate = baseName + '-' + n;
+  }
+  return candidate;
+}
+
+// Alle RX-Subscriptions im Preset sammeln
+function collectAllRxSubscriptions(doc){
+  var out = [];
+  var rxEls = Array.prototype.slice.call(doc.getElementsByTagName("rxchannel"));
+  rxEls.forEach(function(rx){
+    var sd = rx.querySelector("subscribed_device");
+    var sc = rx.querySelector("subscribed_channel");
+    var rxNameEl = rx.querySelector("name");
+    var rxDevEl = rx.parentNode && rx.parentNode.querySelector && rx.parentNode.querySelector(":scope > name");
+    out.push({
+      rxEl: rx,
+      rxDevName: rxDevEl ? (rxDevEl.textContent||"").trim() : "",
+      rxChanName: rxNameEl ? (rxNameEl.textContent||"").trim() : "",
+      subDev: sd ? (sd.textContent||"").trim() : "",
+      subChan: sc ? (sc.textContent||"").trim() : ""
+    });
+  });
+  return out;
+}
+
+
+function txLabelsFromModel(model){
+  var arr = (model && model.device_defaults && Array.isArray(model.device_defaults.txchannels))
+    ? model.device_defaults.txchannels : [];
+  var set = new Set();
+  arr.forEach(function(c){ if (c && c.label != null) set.add(String(c.label)); });
+  return set;
+}
+function rxIdsFromModel(model){
+  var arr = (model && model.device_defaults && Array.isArray(model.device_defaults.rxchannels))
+    ? model.device_defaults.rxchannels : [];
+  var set = new Set();
+  arr.forEach(function(c){ if (c && c.danteId != null) set.add(String(c.danteId)); });
+  return set;
+}
+function removeSubscriptionOnRx(rxEl){
+  if (!rxEl) return;
+  var sd = rxEl.querySelector("subscribed_device");
+  var sc = rxEl.querySelector("subscribed_channel");
+  if (sd) try { rxEl.removeChild(sd); } catch(_){}
+  if (sc) try { rxEl.removeChild(sc); } catch(_){}
+}
+function buildDeviceFromModel(modelId, keepName){
+  if (!window.DA_LIB || !DA_LIB.makeDeviceXml) throw new Error("DA_LIB.makeDeviceXml nicht verfügbar");
+  var xmlText = DA_LIB.makeDeviceXml(modelId, { name: keepName || "" });
+  var doc = new DOMParser().parseFromString("<root>"+xmlText+"</root>","application/xml");
+  var dev = doc.querySelector("device");
+  if (!dev) throw new Error("Modell erzeugte kein <device>");
+  // Name sicherstellen (falls im Modell leer)
+  var n = dev.querySelector("name");
+  if (!n){
+    n = doc.createElement("name");
+    n.textContent = keepName || "";
+    dev.insertBefore(n, dev.firstChild);
+  } else if (keepName) {
+    n.textContent = keepName;
+  }
+  return dev;
+}
+
+// ---- Replace-Helpers: TX/RX aus Device-Element lesen + Mapping ----
+function txLabelsFromDeviceEl(devEl){
+  var out = [];
+  if (!devEl) return out;
+  var list = devEl.getElementsByTagName("txchannel");
+  for (var i=0;i<list.length;i++){
+    var lab = list[i].querySelector("label");
+    out.push(lab && lab.textContent ? lab.textContent.trim() : "");
+  }
+  return out;
+}
+function rxInfosFromDeviceEl(devEl){
+  var out = [];
+  if (!devEl) return out;
+  var list = devEl.getElementsByTagName("rxchannel");
+  for (var i=0;i<list.length;i++){
+    var rx = list[i];
+    var id = String(rx.getAttribute("danteId") || "");
+    var nmEl = rx.querySelector("name");
+    var sdEl = rx.querySelector("subscribed_device");
+    var scEl = rx.querySelector("subscribed_channel");
+    out.push({
+      el: rx,
+      id: id,
+      name: nmEl ? (nmEl.textContent||"").trim() : "",
+      subDev: sdEl ? (sdEl.textContent||"").trim() : "",
+      subChan: scEl ? (scEl.textContent||"").trim() : ""
+    });
+  }
+  return out;
+}
+// mappt altes TX-Label auf neues TX-Label (identisch → gleich, sonst positionsbasiert)
+function mapTxLabel(oldLabel, oldLabels, newLabels){
+  if (!oldLabel) return null;
+  // 1) identischer Name vorhanden?
+  var j = newLabels.indexOf(oldLabel);
+  if (j >= 0) return newLabels[j];
+  // 2) positionsbasiert (nur wenn Label in alter Liste vorhanden)
+  var i = oldLabels.indexOf(oldLabel);
+  if (i >= 0 && i < newLabels.length) return newLabels[i];
+  // 3) kein Mapping möglich
+  return null;
+}
+
+
+// ===== Replace-Device: Dialog + Ablauf =====
+function openReplaceDeviceDialog(deviceName){
+  var modal = document.getElementById("replaceDeviceModal");
+  if (!modal) { alert("Dialog fehlt in HTML."); return; }
+  var tb = modal.querySelector("#repModelTable tbody");
+  var conflictsWrap = modal.querySelector("#repConflictsWrap");
+  var conflictsBody = modal.querySelector("#repConflictsTable tbody");
+  var btnDo = modal.querySelector("#repDoReplace");
+  var info = modal.querySelector("#repCurrent");
+  var filter = modal.querySelector("#repFilter");
+
+  info.textContent = "Ersetze: " + deviceName;
+  conflictsWrap.style.display = "none";
+  conflictsBody.innerHTML = "";
+  btnDo.disabled = true;
+
+  // Liste laden
+  var models = [];
+  try { models = (DA_LIB && DA_LIB.listModels) ? DA_LIB.listModels() : []; } catch(_){ models = []; }
+
+  function applyFilter(){
+    var f = (filter && filter.value) ? filter.value.trim().toLowerCase() : "";
+    tb.innerHTML = "";
+    var cnt = 0;
+    models.forEach(function(m){
+      var ven = (m.manufacturer_name||"");
+      var mod = (m.model_name||"");
+      var pat = (m.device_defaults && m.device_defaults.name_pattern) ? m.device_defaults.name_pattern : "";
+      var txN = m.txCount|0, rxN = m.rxCount|0;
+      var sig = (ven+" "+mod+" "+pat+" "+txN+"x"+rxN).toLowerCase();
+      if (f && sig.indexOf(f) < 0) return;
+
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>"+escapeHtml(ven)+"</td>"+
+                     "<td>"+escapeHtml(mod)+"</td>"+
+                     "<td>"+txN+"×"+rxN+"</td>"+
+                     "<td>"+escapeHtml(pat)+"</td>"+
+                     "<td><button class='btn' data-mid='"+escapeHtml(m.id)+"'>Wählen</button></td>";
+      tb.appendChild(tr);
+      cnt++;
+    });
+    if (!cnt) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td colspan='5' class='muted'>Keine Modelle gefunden.</td>";
+      tb.appendChild(tr);
+    }
+  }
+  applyFilter();
+  if (filter) filter.oninput = applyFilter;
+
+  function close(){ modal.style.display = "none"; }
+  modal.querySelector('[data-role="rep-close"]').onclick = close;
+  modal.querySelector('[data-role="rep-cancel"]').onclick = close;
+
+  // Auswahl-Handler (delegiert)
+  tb.onclick = function(ev){
+    var t = ev.target;
+    if (!t || t.tagName !== "BUTTON" || !t.dataset.mid) return;
+    var modelId = t.dataset.mid;
+    // Konflikte berechnen und anzeigen
+    try {
+      ensurePresetEnvelope(lastXmlDoc);
+      var targetDev = getDeviceElByName(lastXmlDoc, deviceName);
+      if (!targetDev) { alert("Gerät nicht gefunden: "+deviceName); return; }
+
+      // Neu-Modell lesen
+      var m = (DA_LIB.listModels() || []).find(function(x){ return x.id === modelId; });
+      if (!m) { alert("Modell nicht gefunden."); return; }
+
+      var txSet = txLabelsFromModel(m);
+      var rxIdSet = rxIdsFromModel(m);
+
+      // 1) Abos, die ANDERE auf dieses Gerät (als TX-Quelle) gesetzt haben:
+      var subs = collectAllRxSubscriptions(lastXmlDoc);
+      var conflicts = [];
+      subs.forEach(function(su){
+        if (su.subDev === deviceName) {
+          if (!txSet.has(su.subChan)) {
+            conflicts.push({
+              rxDev: su.rxDevName, rxChan: su.rxChanName,
+              txDev: deviceName,   txChan: su.subChan || "(leer)",
+              reason: "TX-Kanal im neuen Gerät nicht vorhanden"
+            });
+          }
+        }
+      });
+
+      // 2) Abos, die dieses Gerät (als RX) gesetzt hat → RX-Kanäle, die es im neuen Modell nicht gibt (per danteId)
+      //    (Wir prüfen RX-Elemente innerhalb des Geräts)
+      var rxEls = Array.prototype.slice.call(targetDev.getElementsByTagName("rxchannel"));
+      rxEls.forEach(function(rx){
+        var id = String(rx.getAttribute("danteId") || "");
+        if (!id) return;
+        if (!rxIdSet.has(id)) {
+          var sd = rx.querySelector("subscribed_device");
+          var sc = rx.querySelector("subscribed_channel");
+          if (sd || sc) {
+            var rxNameEl = rx.querySelector("name");
+            conflicts.push({
+              rxDev: deviceName,
+              rxChan: rxNameEl ? (rxNameEl.textContent||"").trim() : ("RX "+id),
+              txDev: sd ? (sd.textContent||"").trim() : "(leer)",
+              txChan: sc ? (sc.textContent||"").trim() : "(leer)",
+              reason: "RX-Kanal im neuen Gerät nicht vorhanden"
+            });
+          }
+        }
+      });
+
+      // Anzeige
+      conflictsBody.innerHTML = "";
+      if (conflicts.length) {
+        conflictsWrap.style.display = "";
+        conflicts.forEach(function(c){
+          var tr = document.createElement("tr");
+          tr.innerHTML =
+            "<td>"+escapeHtml(c.rxDev)+"</td>"+
+            "<td>"+escapeHtml(c.rxChan)+"</td>"+
+            "<td style='text-align:center'>↔︎</td>"+
+            "<td>"+escapeHtml(c.txDev)+"</td>"+
+            "<td>"+escapeHtml(c.txChan)+"</td>"+
+            "<td class='muted'>"+escapeHtml(c.reason)+"</td>";
+          conflictsBody.appendChild(tr);
+        });
+      } else {
+        conflictsWrap.style.display = "none";
+      }
+
+      // Enable Replace-Button und Merker
+      btnDo.disabled = false;
+      btnDo.dataset.mid = modelId;
+      btnDo.dataset.dev = deviceName;
+
+    } catch (e){
+      console.error(e);
+      alert(e.message || String(e));
+    }
+  };
+
+  // Replace ausführen (verwerfen inkompatibler Abos)
+btnDo.onclick = function(){
+  var modelId = btnDo.dataset.mid;
+  var devName = btnDo.dataset.dev;
+  if (!modelId || !devName) return;
+
+  try {
+    ensurePresetEnvelope(lastXmlDoc);
+
+    // Altgerät + Modell
+    var targetDev = getDeviceElByName(lastXmlDoc, devName);
+    if (!targetDev) { alert("Gerät nicht gefunden: " + devName); return; }
+
+    var models = (DA_LIB && DA_LIB.listModels) ? DA_LIB.listModels() : [];
+    var m = models.find(function(x){ return x.id === modelId; });
+    if (!m) { alert("Modell nicht gefunden."); return; }
+
+    // — A) Vorab: alte TX-Labels & eigene RX-Infos sichern (für spätere Übernahme) —
+    var oldTxLabels = txLabelsFromDeviceEl(targetDev);      // exakte Reihenfolge/Bezeichnungen
+    var oldRxInfos  = rxInfosFromDeviceEl(targetDev);       // inkl. sd/sc für jeden RX
+
+    // — B) Namen bestimmen (ggf. per Pattern eindeutig) —
+    // — B) Namen bestimmen (ggf. per Pattern eindeutig) —
+    var renameChecked = false;
+    var chk = document.getElementById("repRenameByPattern");
+    if (chk && chk.checked) renameChecked = true;
+
+    var newName = devName; // Standard: alten Namen behalten
+
+    if (renameChecked) {
+      // Pattern aus Lib holen (wenn verfügbar), sonst Fallback
+      var patFromLib = (window.DA_LIB && typeof window.DA_LIB.getNamePattern === "function")
+        ? window.DA_LIB.getNamePattern(modelId)
+        : "";
+      var pat = patFromLib || "Device-[n]";
+
+      // Eindeutig über vorhandene Funktion
+      if (typeof generateUniqueNameFromPattern === "function") {
+        newName = generateUniqueNameFromPattern(pat, lastXmlDoc);
+      } else {
+        // Minimal-Fallback (nur falls Helper mal fehlt)
+        newName = pat.replace(/\[(?:n|N)\]/, "1");
+      }
+    } else {
+      // Checkbox OFF: prüfen, ob der alte Name noch woanders verwendet wird
+      // (d. h. von einem zweiten Device – targetDev selbst zählt nicht als Konflikt)
+      var countSame = 0;
+      Array.prototype.forEach.call(lastXmlDoc.getElementsByTagName("device"), function(d){
+        var n = d.querySelector("name");
+        if (n && n.textContent && n.textContent.trim() === devName) countSame++;
+      });
+
+      if (countSame > 1) {
+        // Kollision → automatisch eindeutigen Namen auf Basis des alten Namens bilden.
+        // Trick: vorhandene Funktion wiederverwenden – Pattern OHNE [n] → hängt "-n" an.
+        if (typeof generateUniqueNameFromPattern === "function") {
+          newName = generateUniqueNameFromPattern(devName, lastXmlDoc);
+        } else {
+          // Minimal-Fallback: devName-2, devName-3, ...
+          var n = 2, cand = devName + "-" + n;
+          var exists = function(x){
+            return Array.prototype.some.call(
+              lastXmlDoc.getElementsByTagName("device"),
+              function(d){ var nm = d.querySelector("name"); return nm && nm.textContent.trim() === x; }
+            );
+          };
+          while (exists(cand)) { n++; cand = devName + "-" + n; }
+          newName = cand;
+        }
+      }
+    }
+
+    // Sicherheit: selbst bei Race-Conditions noch mal prüfen (idempotent)
+    if (typeof generateUniqueNameFromPattern === "function") {
+      if (newName && newName.indexOf("[n]") === -1 && newName.indexOf("{n}") === -1 && newName.indexOf("<n>") === -1) {
+        // patternloser Name → gegen Doppelnamen absichern
+        var exists2 = Array.prototype.some.call(
+          lastXmlDoc.getElementsByTagName("device"),
+          function(d){ var nm = d.querySelector("name"); return nm && nm.textContent.trim() === newName; }
+        );
+        if (exists2) newName = generateUniqueNameFromPattern(newName, lastXmlDoc);
+      }
+    }
+
+    // — C) neues Device aus Modell erzeugen —
+    var newDev = buildDeviceFromModel(modelId, newName);
+
+    // — D) ersetzen —
+    targetDev.parentNode.replaceChild(lastXmlDoc.importNode(newDev, true), targetDev);
+
+    // — E) neue TX-/RX-Listen aufnehmen —
+    var replacedDev = getDeviceElByName(lastXmlDoc, newName);
+    var newTxLabels = txLabelsFromDeviceEl(replacedDev);
+    var newRxList   = Array.prototype.slice.call(replacedDev.getElementsByTagName("rxchannel"));
+
+    // — F) Inbound-Subscriptions (andere Geräte → dieses Gerät) umschreiben —
+    var allRx = collectAllRxSubscriptions(lastXmlDoc);
+    allRx.forEach(function(su){
+      if (!su.rxEl) return;
+      // auf dieses Gerät?
+      if ((su.subDev || "") === devName) {
+        // 1) subscribed_device → neuer Name
+        var sd = su.rxEl.querySelector("subscribed_device");
+        if (!sd) { sd = lastXmlDoc.createElement("subscribed_device"); su.rxEl.appendChild(sd); }
+        sd.textContent = newName;
+
+        // 2) subscribed_channel → per Label/Position mappen
+        var mapped = mapTxLabel(su.subChan || "", oldTxLabels, newTxLabels);
+        if (mapped) {
+          var sc = su.rxEl.querySelector("subscribed_channel");
+          if (!sc) { sc = lastXmlDoc.createElement("subscribed_channel"); su.rxEl.appendChild(sc); }
+          sc.textContent = mapped;
+        } else {
+          // kein Mapping möglich → Abo verwerfen
+          removeSubscriptionOnRx(su.rxEl);
+        }
+      }
+    });
+
+    // — G) Eigene RX-Subscriptions (dieses Gerät als Empfänger) übernehmen —
+    if (oldRxInfos.length === newRxList.length) {
+      // positionsbasiert kopieren
+      for (var i=0; i<oldRxInfos.length; i++){
+        var src = oldRxInfos[i];
+        var dst = newRxList[i];
+        if (!dst) continue;
+        // nur übernehmen, wenn vorher überhaupt was gesetzt war
+        if (src.subDev || src.subChan) {
+          var sd2 = dst.querySelector("subscribed_device");
+          var sc2 = dst.querySelector("subscribed_channel");
+          if (!sd2) { sd2 = lastXmlDoc.createElement("subscribed_device"); dst.appendChild(sd2); }
+          if (!sc2) { sc2 = lastXmlDoc.createElement("subscribed_channel"); dst.appendChild(sc2); }
+          sd2.textContent = src.subDev || "";
+          sc2.textContent = src.subChan || "";
+        }
+      }
+    } else {
+      // id-basiert: alte RX danteId → neue RX danteId
+      var mapNewById = new Map();
+      newRxList.forEach(function(rx){ mapNewById.set(String(rx.getAttribute("danteId")||""), rx); });
+      oldRxInfos.forEach(function(src){
+        if (!(src.subDev || src.subChan)) return; // nur aktive Abos übertragen
+        var dst = mapNewById.get(String(src.id||""));
+        if (!dst) return; // nicht vorhanden → entfällt
+        var sd2 = dst.querySelector("subscribed_device");
+        var sc2 = dst.querySelector("subscribed_channel");
+        if (!sd2) { sd2 = lastXmlDoc.createElement("subscribed_device"); dst.appendChild(sd2); }
+        if (!sc2) { sc2 = lastXmlDoc.createElement("subscribed_channel"); dst.appendChild(sc2); }
+        sd2.textContent = src.subDev || "";
+        sc2.textContent = src.subChan || "";
+      });
+    }
+
+    // — H) Persist & UI —
+    var xmlOut = new XMLSerializer().serializeToString(lastXmlDoc);
+    writePresetToSession(xmlOut);
+    fillPresetTable(lastXmlDoc);
+
+    // schließen
+    (function close(){ var modal = document.getElementById("replaceDeviceModal"); if (modal) modal.style.display = "none"; })();
+
+  } catch(e){
+    console.error(e);
+    alert(e.message || String(e));
+  }
+};
+
+  // Anzeigen
+  modal.style.display = "flex";
 }
 
 (function bindExport(){
