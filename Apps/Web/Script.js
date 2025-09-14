@@ -5,6 +5,7 @@ var HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan" 
 var SKEY_XML  = "DA_PRESET_XML";
 var SKEY_META = "DA_PRESET_META";
 
+// ---- Helper Functions ----
 function $(s){ return document.querySelector(s); }
 function rowHtml(cols){ return "<tr>" + cols.map(function(c){ return "<td>"+c+"</td>"; }).join("") + "</tr>"; }
 function parseXml(text){
@@ -12,9 +13,73 @@ function parseXml(text){
   var err = xml.querySelector("parsererror"); if(err) throw new Error("XML Parser Error: " + err.textContent);
   return xml;
 }
-function serializeWithHeader(xml){
-  var s = new XMLSerializer().serializeToString(xml).replace(/^<\?xml[^>]*\?>\s*/i,"");
-  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
+// Serialisieren mit XML-Header (UTF-8 + standalone="yes")
+function serializeWithHeader(xmlDoc){
+  var xml = new XMLSerializer().serializeToString(xmlDoc);
+  var hasHeader = /^\s*<\?xml[^>]*\?>/i.test(xml);
+  if (hasHeader) {
+    return xml; // vorhandenen Header nicht anfassen
+  } else {
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml;
+  }
+}
+
+// Ensure Preset Envelope (root <preset> with version, <name>, <description>)
+function ensurePresetEnvelope(doc){
+  if (!doc) return;
+  let root = doc.documentElement;
+
+  // Sicherstellen, dass <preset> Root existiert
+  if (!root || root.tagName !== "preset") {
+    const newRoot = doc.createElement("preset");
+    newRoot.setAttribute("version", "2.1.0");
+    if (root) {
+      while (doc.firstChild) doc.removeChild(doc.firstChild);
+      doc.appendChild(newRoot);
+      newRoot.appendChild(root);
+    } else {
+      doc.appendChild(newRoot);
+    }
+    root = newRoot;
+  }
+
+  // Hilfsfunktionen: nur DIREKTE Kinder ermitteln
+  const getDirectChild = (parent, localName) => {
+    const kids = parent.children || [];
+    for (let i = 0; i < kids.length; i++) {
+      if ((kids[i].localName || kids[i].nodeName) === localName) return kids[i];
+    }
+    return null;
+  };
+  const insertAfter = (ref, node) => {
+    if (ref && ref.parentNode) {
+      if (ref.nextSibling) ref.parentNode.insertBefore(node, ref.nextSibling);
+      else ref.parentNode.appendChild(node);
+    }
+  };
+
+  // Version-Attribut sicherstellen (nur wenn fehlend)
+  if (!root.getAttribute("version")) root.setAttribute("version", "2.1.0");
+
+  // <name> als direktes Kind sicherstellen
+  let nameNode = getDirectChild(root, "name");
+  if (!nameNode) {
+    nameNode = doc.createElement("name");
+    nameNode.textContent = "DanteArchitectPreset";
+    root.insertBefore(nameNode, root.firstChild);
+  } else if (!nameNode.textContent || !nameNode.textContent.trim()) {
+    nameNode.textContent = "DanteArchitectPreset";
+  }
+
+  // <description> als direktes Kind sicherstellen
+  let descNode = getDirectChild(root, "description");
+  if (!descNode) {
+    descNode = doc.createElement("description");
+    descNode.textContent = "Dante Controller preset";
+    insertAfter(nameNode, descNode);
+  } else if (!descNode.textContent || !descNode.textContent.trim()) {
+    descNode.textContent = "Dante Controller preset";
+  }
 }
 
 // ---- Global State ----
@@ -100,6 +165,8 @@ function fillPresetTable(xml){
     btnDelete.textContent = "Löschen";
 
     btnDelete.addEventListener("click", function(ev){
+      try { ensurePresetEnvelope(lastXmlDoc); } 
+        catch(_){}
       closeAllMenus();
       // Bestätigung (mit „Nicht mehr anzeigen“-Option)
       confirmDeleteWithSkip(name).then(function(ok){
@@ -178,7 +245,6 @@ function readFromSession(){
 })();
 
 // ---- Export ----
-// INSERT BELOW:
 // -- Schließe alle offenen 3-Punkte-Menüs (Dropdowns) --
 function closeAllMenus(){
   try {
@@ -292,8 +358,9 @@ function deleteDeviceByName(deviceName){
       var s = readFromSession(); if(s){ try{ lastXmlDoc = parseXml(s); }catch(_){} }
     }
     if(!lastXmlDoc){ alert("Bitte zuerst ein Preset laden."); return; }
+    try { ensurePresetEnvelope(lastXmlDoc); } catch(_){}
     var content = serializeWithHeader(lastXmlDoc);
-    var blob = new Blob([content], {type:"application/xml"});
+    var blob = new Blob([content], { type: "application/xml" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "ArchitectExport.xml";

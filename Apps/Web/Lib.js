@@ -402,57 +402,142 @@ window.DA_LIB = (function () {
   }
 
   // ===== Device-XML Builder =====
-  function makeDeviceXml(modelId, opts) {
-    const list = load();
-    const m = list.find((x) => x.id === modelId);
-    if (!m) throw new Error("Model nicht gefunden");
 
-    const name =
-      (opts && typeof opts.name === "string" && opts.name.trim()) ||
-      m.device_defaults.name_pattern.replace("[n]", "1").replace("xxxx", "0000");
+function makeDeviceXml(modelId, opts) {
+  const list = load();
+  const m = list.find((x) => x.id === modelId);
+  if (!m) throw new Error("Model nicht gefunden");
 
-    const dd = m.device_defaults;
+  const dd = m.device_defaults || {};
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-    function esc(s) {
-      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
+  // Name: weiterhin deine Logik — ABER ohne zusätzliche Fallback-Defaults
+  const name =
+    (opts && typeof opts.name === "string" && opts.name.trim()) ||
+    (dd.name_pattern ? dd.name_pattern.replace("[n]", "1").replace("xxxx", "0000") : "");
 
-    // 1) Name + Basis
-    let xml =
-      `<device>\n` +
-      `  <name>${esc(name)}</name>\n` +
-      `  <manufacturer_name>${esc(m.manufacturer_name || DEFAULTS.manufacturer_name)}</manufacturer_name>\n` +
-      `  <model_name>${esc(m.model_name || DEFAULTS.model_name)}</model_name>\n`;
+  let xml = `<device>\n`;
+  if (name) xml += `  <name>${esc(name)}</name>\n`;
 
-    // 2) model_params (in stabiler Reihenfolge)
-    const mpKeys = Object.keys(m.model_params || {}).sort();
-    mpKeys.forEach(k => {
-      const v = m.model_params[k];
+  // Nur aus der Lib vorhandene Felder schreiben (keine Defaults aus Code!)
+  if (m.manufacturer_name) xml += `  <manufacturer_name>${esc(m.manufacturer_name)}</manufacturer_name>\n`;
+  if (m.model_name)        xml += `  <model_name>${esc(m.model_name)}</model_name>\n`;
+
+  // optionale Device-Metadaten ausschließlich, wenn in der Lib vorhanden
+  if (typeof dd.default_name === "string" && dd.default_name) {
+    xml += `  <default_name>${esc(dd.default_name)}</default_name>\n`;
+  }
+  if (typeof dd.friendly_name === "string" && dd.friendly_name) {
+    xml += `  <friendly_name>${esc(dd.friendly_name)}</friendly_name>\n`;
+  }
+
+  // instance_id nur, wenn beide Felder vorhanden sind
+  if ((dd.device_id && dd.device_id !== "") || (dd.process_id && dd.process_id !== "")) {
+    xml += `  <instance_id>\n`;
+    if (dd.device_id)  xml += `    <device_id>${esc(dd.device_id)}</device_id>\n`;
+    if (dd.process_id) xml += `    <process_id>${esc(dd.process_id)}</process_id>\n`;
+    xml += `  </instance_id>\n`;
+  }
+
+  // model_params (unverändert, aber nur die vorhandenen)
+  const mp = m.model_params || {};
+  Object.keys(mp).sort().forEach((k) => {
+    const v = mp[k];
+    if (v !== undefined && v !== null && v !== "") {
       xml += `  <${k}>${esc(v)}</${k}>\n`;
-    });
+    }
+  });
 
-    // 3) device simple fields
-    DEVICE_SIMPLE_FIELDS.forEach(key => {
-      const val = (dd[key] != null) ? dd[key] : (DEFAULTS[key] != null ? DEFAULTS[key] : "");
-      if (val !== "" && val !== null && val !== undefined) {
-        xml += `  <${key}>${esc(val)}</${key}>\n`;
+  // DEVICE_SIMPLE_FIELDS: nur wenn im dd gesetzt (kein Fallback auf DEFAULTS)
+  DEVICE_SIMPLE_FIELDS.forEach((key) => {
+    const val = dd[key];
+    if (val !== "" && val !== null && val !== undefined) {
+      xml += `  <${key}>${esc(val)}</${key}>\n`;
+    }
+  });
+
+  // optionale Flags/Felder nur, wenn im dd vorhanden
+  if (dd.hasOwnProperty("switch_vlan")) {
+    xml += `  <switch_vlan value="${esc(String(dd.switch_vlan))}"/>\n`;
+  }
+  if (dd.hasOwnProperty("preferred_master")) {
+    xml += `  <preferred_master value="${dd.preferred_master ? "true" : "false"}"/>\n`;
+  }
+  if (dd.hasOwnProperty("external_word_clock")) {
+    xml += `  <external_word_clock value="${dd.external_word_clock ? "true" : "false"}"/>\n`;
+  }
+  if (dd.hasOwnProperty("redundancy")) {
+    xml += `  <redundancy value="${dd.redundancy ? "true" : "false"}"/>\n`;
+  }
+  if (dd.hasOwnProperty("samplerate") && dd.samplerate !== "" && dd.samplerate !== null) {
+    xml += `  <samplerate>${esc(String(dd.samplerate))}</samplerate>\n`;
+  }
+  if (dd.hasOwnProperty("encoding") && dd.encoding !== "" && dd.encoding !== null) {
+    xml += `  <encoding>${esc(String(dd.encoding))}</encoding>\n`;
+  }
+  if (dd.hasOwnProperty("unicast_latency") && dd.unicast_latency !== "" && dd.unicast_latency !== null) {
+    xml += `  <unicast_latency>${esc(String(dd.unicast_latency))}</unicast_latency>\n`;
+  }
+
+  // Interfaces: nur, wenn in dd.interfaces vorhanden (Anzahl) ODER dd.interfaces_list existiert
+  if (typeof dd.interfaces === "number" && dd.interfaces > 0) {
+    for (let n = 0; n < dd.interfaces; n++) {
+      const mode = (dd.ipv4_mode ? String(dd.ipv4_mode) : "").trim();
+      xml += `  <interface network="${n}">\n`;
+      if (mode) xml += `    <ipv4_address mode="${esc(mode)}"/>\n`;
+      xml += `  </interface>\n`;
+    }
+  } else if (Array.isArray(dd.interfaces_list) && dd.interfaces_list.length) {
+    dd.interfaces_list.forEach((it) => {
+      const net = (it && it.network != null) ? String(it.network) : null;
+      const mode = (it && it.ipv4_mode != null) ? String(it.ipv4_mode) : null;
+      if (net != null) {
+        xml += `  <interface network="${esc(net)}">\n`;
+        if (mode) xml += `    <ipv4_address mode="${esc(mode)}"/>\n`;
+        xml += `  </interface>\n`;
       }
     });
-
-    // 4) Kanäle
-    const txXml = dd.txchannels.map(
-      (c) => `  <txchannel danteId="${esc(c.danteId)}">\n    <label>${esc(c.label)}</label>\n  </txchannel>`
-    ).join("\n");
-    const rxXml = dd.rxchannels.map(
-      (c) => `  <rxchannel danteId="${esc(c.danteId)}">\n    <name>${esc(c.name)}</name>\n  </rxchannel>`
-    ).join("\n");
-
-    if (txXml) xml += txXml + "\n";
-    if (rxXml) xml += rxXml + "\n";
-
-    xml += `</device>`;
-    return xml;
   }
+
+  // Kanäle: nur, wenn dd.txchannels / dd.rxchannels gesetzt
+  if (Array.isArray(dd.txchannels) && dd.txchannels.length) {
+    xml += dd.txchannels.map((c) => {
+      const id = c && c.danteId != null ? String(c.danteId) : null;
+      const lbl = c && c.label != null ? String(c.label) : null;
+      if (!id) return "";
+      let s = `  <txchannel danteId="${esc(id)}"`;
+      // mediaType nur, wenn in Lib definiert
+      if (c.mediaType) s += ` mediaType="${esc(String(c.mediaType))}"`;
+      s += `>\n`;
+      if (lbl) s += `    <label>${esc(lbl)}</label>\n`;
+      s += `  </txchannel>`;
+      return s;
+    }).filter(Boolean).join("\n") + "\n";
+  }
+
+  if (Array.isArray(dd.rxchannels) && dd.rxchannels.length) {
+    xml += dd.rxchannels.map((c) => {
+      const id = c && c.danteId != null ? String(c.danteId) : null;
+      const nm = c && c.name != null ? String(c.name) : null;
+      if (!id) return "";
+      let s = `  <rxchannel danteId="${esc(id)}"`;
+      if (c.mediaType) s += ` mediaType="${esc(String(c.mediaType))}"`;
+      s += `>\n`;
+      if (nm) s += `    <name>${esc(nm)}</name>\n`;
+      s += `  </rxchannel>`;
+      return s;
+    }).filter(Boolean).join("\n") + "\n";
+  }
+
+  // Extra-XML nur, wenn explizit in der Lib hinterlegt
+  if (typeof dd.extra_xml === "string" && dd.extra_xml.trim()) {
+    xml += dd.extra_xml.trim() + "\n";
+  }
+
+  xml += `</device>`;
+  return xml;
+}
+
 
   // ===== UI: Adopt Wizard =====
 function findModelsByModelName(model_name) {
