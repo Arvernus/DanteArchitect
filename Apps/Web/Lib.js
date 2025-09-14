@@ -196,6 +196,48 @@ window.DA_LIB = (function () {
     return out;
   }
 
+  // ===== Name Pattern =====
+  function getNamePattern(modelId){
+    var id = String(modelId || '').trim();
+
+    // Debug: schnell sehen, ob die Funktion aufgerufen wird
+    // console.debug('[DA_LIB] getNamePattern called with id=', id);
+
+    var list = load();
+    var m = list.find(x => String(x.id) === id);
+
+    // Fallback-Suche (falls einmal andere IDs verwendet werden)
+    if (!m) {
+      m = list.find(x => String((x && x._drag_id) || '') === id);
+    }
+
+    if (!m) {
+      // console.warn('[DA_LIB] getNamePattern: model not found for id=', id);
+      return 'Device-[n]';
+    }
+
+    var pat =
+        (m.device_defaults && m.device_defaults.name_pattern) ||
+        m.name_pattern ||
+        (m.naming && m.naming.pattern) ||
+        m.pattern ||
+        'Device-[n]';
+
+    // console.debug('[DA_LIB] getNamePattern: found pattern=', pat, 'for model', m.model_name);
+    return String(pat);
+    // Stelle sicher, dass getNamePattern öffentlich verfügbar ist:
+    (function(){
+      try{
+        if (typeof window !== "undefined") {
+          if (!window.DA_LIB) window.DA_LIB = {};
+          // nur setzen, wenn noch nicht vorhanden oder überschreiben ausdrücklich gewünscht
+          window.DA_LIB.getNamePattern = getNamePattern;
+        }
+      }catch(_){}
+    })(); 
+}
+
+
   // ===== Fingerprint + Extraction =====
   function fingerprintFromDevice(deviceEl) {
     const devName = readFirstText(deviceEl, XSD_NAME, []);
@@ -630,6 +672,15 @@ btn.onclick = function () {
         row.style.justifyContent = "space-between";
         row.style.gap = "8px";
 
+        // Drag & Drop aktivieren (Row ist die "Karte" in der Sidebar)
+        row.draggable = true;
+        row.addEventListener("dragstart", function(ev){
+          try{
+            ev.dataTransfer.setData("text/plain", String(m.id));
+            ev.dataTransfer.effectAllowed = "copy";
+          }catch(_){}
+        });
+
         const text = document.createElement("div");
         const vh = m.manufacturer_name ? m.manufacturer_name + " / " : "";
         text.textContent = `${vh}${m.model_name} (${m.txCount}×${m.rxCount})`;
@@ -752,10 +803,11 @@ btn.onclick = function () {
   }
 
   // ===== Public API =====
-  return {
-    openAdoptWizard,
-    renderSidebarInto,
-    _forceRenderSidebar: requestRenderSidebar,
-    makeDeviceXml,
-  };
-})();
+return {
+  openAdoptWizard,
+  renderSidebarInto,
+  _forceRenderSidebar: requestRenderSidebar,
+  makeDeviceXml,
+  getNamePattern,
+  listModels: function(){ return load().slice(); },
+};})();

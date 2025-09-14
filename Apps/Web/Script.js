@@ -58,20 +58,81 @@ function fillPresetTable(xml){
   var tbody = $("#presetTable tbody"); if(!tbody) return;
   tbody.innerHTML = "";
 
+  // Geräte sammeln (robust für verschiedene Preset-Wurzeln)
   var devs = Array.prototype.slice.call(xml.querySelectorAll("preset > device"));
-  if(devs.length === 0) devs = Array.prototype.slice.call(xml.querySelectorAll("device"));
+  if (devs.length === 0) devs = Array.prototype.slice.call(xml.querySelectorAll("device"));
 
   devs.forEach(function(d){
     var nameEl = d.querySelector("name");
     var name = nameEl && nameEl.textContent ? nameEl.textContent.trim() : "(ohne Name)";
     var tx = d.querySelectorAll("txchannel").length;
     var rx = d.querySelectorAll("rxchannel").length;
-    tbody.insertAdjacentHTML("beforeend", rowHtml([name, tx, rx]));
+
+    var tr = document.createElement("tr");
+
+    var tdName = document.createElement("td");
+    tdName.textContent = name;
+
+    var tdTx = document.createElement("td");
+    tdTx.textContent = tx;
+
+    var tdRx = document.createElement("td");
+    tdRx.textContent = rx;
+
+    // Aktionen: 3-Punkte-Menü (Dropdown)
+    var tdAct = document.createElement("td");
+    var menu = document.createElement("div");
+    menu.className = "menu";
+
+    var toggle = document.createElement("button");
+    toggle.className = "btn menu-toggle";
+    toggle.type = "button";
+    toggle.title = "Aktionen";
+    toggle.textContent = "⋯";
+
+    var list = document.createElement("div");
+    list.className = "menu-list";
+
+    // Menüeintrag: Löschen
+    var btnDelete = document.createElement("button");
+    btnDelete.className = "menu-item";
+    btnDelete.type = "button";
+    btnDelete.textContent = "Löschen";
+
+    btnDelete.addEventListener("click", function(ev){
+      closeAllMenus();
+      // Bestätigung (mit „Nicht mehr anzeigen“-Option)
+      confirmDeleteWithSkip(name).then(function(ok){
+        if (ok) deleteDeviceByName(name);
+      }).catch(function(){ /* abgebrochen */ });
+    });
+
+    list.appendChild(btnDelete);
+    menu.appendChild(toggle);
+    menu.appendChild(list);
+    tdAct.appendChild(menu);
+
+    // Toggle Öffnen/Schließen
+    toggle.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      // Erst alle anderen schließen
+      closeAllMenus();
+      menu.classList.toggle("open");
+    });
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdTx);
+    tr.appendChild(tdRx);
+    tr.appendChild(tdAct);
+
+    tbody.appendChild(tr);
   });
 
   var be = $("#btnExport"); if(be) be.disabled = devs.length === 0;
   var bm = $("#btnMatrix"); if(bm) bm.disabled = devs.length === 0;
 }
+
+
 
 function fillOnlineTable(list){
   var tbody = $("#onlineTable tbody"); if(!tbody) return;
@@ -117,6 +178,113 @@ function readFromSession(){
 })();
 
 // ---- Export ----
+// INSERT BELOW:
+// -- Schließe alle offenen 3-Punkte-Menüs (Dropdowns) --
+function closeAllMenus(){
+  try {
+    document.querySelectorAll(".menu.open").forEach(function(m){ m.classList.remove("open"); });
+  } catch(_){}
+}
+
+// Globale Click-Handler: Klick außerhalb schließt Menüs
+(function enableGlobalMenuCloser(){
+  document.addEventListener("click", function(){
+    closeAllMenus();
+  });
+  // ESC schließt ebenfalls
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape") closeAllMenus();
+  });
+})();
+
+// Delete-Bestätigung mit „Nicht mehr anzeigen“
+var DEL_CONFIRM_SKIP_KEY = "DA_SKIP_DELETE_CONFIRM";
+
+function confirmDeleteWithSkip(deviceName){
+  return new Promise(function(resolve, reject){
+    try{
+      var skip = false;
+      try { skip = localStorage.getItem(DEL_CONFIRM_SKIP_KEY) === "1"; } catch(_){}
+      if (skip) { resolve(true); return; }
+
+      var host = document.createElement("div");
+      host.className = "modal-confirm";
+      host.innerHTML = ''+
+        '<div class="card">'+
+          '<div class="hdr">Löschen bestätigen</div>'+
+          '<div class="body">'+
+            '<div class="row">Willst du das wirklich tun?<br><strong>'+escapeHtml(deviceName)+'</strong> wird aus dem Preset entfernt.</div>'+
+            '<label class="row chk"><input id="chkDeleteSkip" type="checkbox"> Diese Abfrage nicht mehr anzeigen</label>'+
+          '</div>'+
+          '<div class="ftr">'+
+            '<button id="btnDelCancel" class="btn">Abbrechen</button>'+
+            '<button id="btnDelOk" class="btn btn-danger">Löschen</button>'+
+          '</div>'+
+        '</div>';
+
+      document.body.appendChild(host);
+
+      function cleanup(){ try{ document.body.removeChild(host); }catch(_){ } }
+
+      host.querySelector("#btnDelCancel").addEventListener("click", function(){
+        cleanup(); reject();
+      });
+      host.querySelector("#btnDelOk").addEventListener("click", function(){
+        var c = host.querySelector("#chkDeleteSkip");
+        if (c && c.checked) { try { localStorage.setItem(DEL_CONFIRM_SKIP_KEY, "1"); } catch(_){ } }
+        cleanup(); resolve(true);
+      });
+
+    }catch(err){
+      // Fallback: normales confirm
+      var ok = window.confirm("Gerät „"+deviceName+"“ wirklich löschen?");
+      if (ok) resolve(true); else reject();
+    }
+  });
+}
+
+// kleine Helper-Funktion für HTML-Escapes
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
+  });
+}
+
+// Gerät aus dem Preset entfernen und speichern
+function deleteDeviceByName(deviceName){
+  if (!deviceName) return;
+  var doc = lastXmlDoc;
+  try {
+    if (!doc) {
+      var s = readFromSession();
+      if (s) doc = parseXml(s);
+    }
+    if (!doc) { alert("Kein Preset geladen."); return; }
+
+    var all = Array.prototype.slice.call(doc.getElementsByTagName("device"));
+    var target = all.find(function(d){
+      var n = d.querySelector("name");
+      return n && n.textContent && n.textContent.trim() === deviceName;
+    });
+
+    if (!target) { alert("Gerät nicht gefunden: " + deviceName); return; }
+
+    // Sicherheitsabfrage
+    var ok = window.confirm("Gerät „" + deviceName + "“ wirklich löschen?");
+    if (!ok) return;
+
+    target.parentNode.removeChild(target);
+
+    // Persistieren & UI aktualisieren
+    lastXmlDoc = doc;
+    writePresetToSession(new XMLSerializer().serializeToString(lastXmlDoc));
+    fillPresetTable(lastXmlDoc);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || String(err));
+  }
+}
+
 (function bindExport(){
   var be = $("#btnExport"); if(!be) return;
   be.addEventListener("click", function(){
@@ -179,7 +347,6 @@ try { window.renderLibrarySidebar(); } catch(_){}
     btn.addEventListener("click", openWizardFromCurrentPreset);
     return true;
   }
-  // Nur noch Sidebar-Button
   var ok = bindOnce("btnLibWizardSidebar");
   if (!ok) {
     document.addEventListener("DOMContentLoaded", function(){ bindOnce("btnLibWizardSidebar"); }, {once:true});
@@ -189,6 +356,30 @@ try { window.renderLibrarySidebar(); } catch(_){}
     },150);
   }
 })();
+
+// Rehydrate Preset-Ansicht beim Laden und beim Zurückkehren (History Navigation)
+function hydratePresetFromStorage() {
+  try {
+    var s = readFromSession();
+    if (!s) return;
+    lastXmlDoc = parseXml(s);
+    fillPresetTable(lastXmlDoc);
+  } catch(_){ /* ignore */ }
+}
+
+// Beim initialen Laden
+hydratePresetFromStorage();
+
+// Wenn man per Browser „zurück“ von der Matrix kommt (bfcache/pageshow)
+window.addEventListener("pageshow", function() {
+  hydratePresetFromStorage();
+});
+
+// Fallback: wenn Tab wieder sichtbar wird
+document.addEventListener("visibilitychange", function() {
+  if (!document.hidden) hydratePresetFromStorage();
+});
+
 
 // --- Library-Sidebar sicher initial anzeigen ---
 (function ensureInitialLibraryRender(){
@@ -201,28 +392,128 @@ try { window.renderLibrarySidebar(); } catch(_){}
     return false;
   }
   if (!attempt()){
-    document.addEventListener("DOMContentLoaded", attempt, { once:true });
-    var tries = 0, t = setInterval(function(){
-      tries++;
-      if (attempt()) { clearInterval(t); }
-      if (tries > 10) clearInterval(t);
-    }, 150);
+    var tries=0, t=setInterval(function(){ tries++; if(attempt()) clearInterval(t); if(tries>10) clearInterval(t); }, 150);
   }
 })();
 
-// ---- Safe Autoload nach Rücksprung (#via=matrix) ----
-(function safeAutoloadAfterBack(){
-  try{
-    var via = (location.hash||"").indexOf("via=matrix") >= 0;
-    if(!via) return;
-    var s = readFromSession();
-    if(!s) return;
-    var doc = parseXml(s);
-    lastXmlDoc = doc;
-    fillPresetTable(lastXmlDoc);
-    var be = $("#btnExport"); if(be) be.disabled = false;
-    var bm = $("#btnMatrix"); if(bm) bm.disabled = false;
-  }catch(e){
-    console.warn("safeAutoloadAfterBack:", e);
+/* ============================================================
+   👉 NEU: Drag & Drop auf der PRESET-TABELLE
+   - Lib-Einträge sind draggable (in Lib.js gesetzt)
+   - Drop auf #presetTable fügt Device ins Preset ein
+   - Name über Name-Pattern + eindeutiger [n]-Zähler
+   ============================================================ */
+(function enablePresetTableDrop(){
+  var table = document.getElementById("presetTable");
+  if(!table) return;
+
+  function ensureDoc(){
+    if (lastXmlDoc) return lastXmlDoc;
+    var s = readFromSession(); if(s){ try{ lastXmlDoc = parseXml(s); }catch(_){ lastXmlDoc=null; } }
+    if(!lastXmlDoc){ lastXmlDoc = parseXml("<preset/>"); }
+    return lastXmlDoc;
   }
+
+ function generateUniqueNameFromPattern(pattern, doc){
+  // 1) Pattern normalisieren (Fallback ohne 'xxxx', damit wir es nicht versehentlich befüllen)
+  var pat = String(pattern || "Device-[n]");
+
+  // 2) Prüfen, ob ein [n]-Platzhalter (auch Varianten wie {n} / <n>) enthalten ist
+  var hasNToken = /\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/.test(pat);
+
+  // 3) Helfer zum Ersetzen des Zählers, 'xxxx' bleibt UNVERÄNDERT (Design-Vorgabe)
+  function makeName(n){
+    var out = pat.replace(/\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/g, String(n));
+    if (!hasNToken) {
+      // falls kein n-Token im Pattern vorhanden ist, hänge zur Eindeutigkeit -n an
+      out = out + "-" + String(n);
+    }
+    return out;
+  }
+
+  // 4) vorhandene Namen einsammeln
+  var existing = new Set(Array.prototype.map.call(
+    doc.getElementsByTagName("device"),
+    function(d){
+      var n = d.querySelector("name");
+      return n && n.textContent ? n.textContent.trim() : "";
+    }
+  ));
+
+  // 5) freie Nummer finden
+  var n = 1, candidate = makeName(n);
+  while (existing.has(candidate)) {
+    n++;
+    candidate = makeName(n);
+  }
+  return candidate;
+}
+
+
+  function addDeviceFromModelId(modelId){
+    if(!window.DA_LIB || !window.DA_LIB.makeDeviceXml){ alert("Library-Modul fehlt."); return; }
+    var doc = ensureDoc();
+
+modelId = (modelId || '').trim();
+
+    // Primär über Lib-API
+    var pattern = (window.DA_LIB && typeof window.DA_LIB.getNamePattern === 'function')
+      ? window.DA_LIB.getNamePattern(modelId)
+      : '';
+
+    // Fallback: direkt im Modell suchen (ältere Lib-Stände)
+    if (!pattern && window.DA_LIB && typeof window.DA_LIB.listModels === 'function') {
+      try {
+        var models = window.DA_LIB.listModels() || [];
+        var m = models.find(x => String(x.id) === modelId || String(x._drag_id||'') === modelId);
+        if (m) {
+          pattern =
+            (m.device_defaults && m.device_defaults.name_pattern) ||
+            m.name_pattern ||
+            (m.naming && m.naming.pattern) ||
+            m.pattern || '';
+        }
+      } catch(_) {}
+    }
+
+    if (!pattern) {
+      console.warn('[Architect] Kein Name-Pattern in Lib gefunden – Fallback auf "Device-[n]". modelId=', modelId);
+      pattern = 'Device-[n]';
+    } else {
+      console.debug('[Architect] Name-Pattern aus Lib:', pattern, 'modelId=', modelId);
+    }    var deviceName = generateUniqueNameFromPattern(pattern, doc);
+
+    
+    // Device-XML erzeugen
+    var devXmlStr = window.DA_LIB.makeDeviceXml(modelId, { name: deviceName });
+
+    // in Preset-Dokument übernehmen
+    var frag = parseXml(devXmlStr);
+    var devEl = frag.documentElement;
+    var imported = doc.importNode ? doc.importNode(devEl, true) : devEl;
+    var pres = doc.querySelector("preset") || doc.documentElement;
+    pres.appendChild(imported);
+
+    // speichern & UI aktualisieren
+    lastXmlDoc = doc;
+    writePresetToSession(new XMLSerializer().serializeToString(lastXmlDoc));
+    fillPresetTable(lastXmlDoc);
+  }
+
+  table.addEventListener("dragover", function(e){
+    if(!e.dataTransfer) return;
+    if(e.dataTransfer.types && e.dataTransfer.types.indexOf("text/plain")>=0){
+      e.preventDefault();
+      table.classList.add("drop-hover");
+      e.dataTransfer.dropEffect = "copy";
+    }
+  });
+  table.addEventListener("dragleave", function(){ table.classList.remove("drop-hover"); });
+  table.addEventListener("drop", function(e){
+    e.preventDefault();
+    table.classList.remove("drop-hover");
+    try {
+      var modelId = e.dataTransfer.getData("text/plain");
+      if(modelId) addDeviceFromModelId(modelId);
+    } catch(_) {}
+  });
 })();

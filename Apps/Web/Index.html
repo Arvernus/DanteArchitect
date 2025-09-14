@@ -27,7 +27,7 @@
         <div class="card-body">
           <table id="presetTable" class="table">
             <thead>
-              <tr><th>Gerätename</th><th>TX</th><th>RX</th></tr>
+              <tr><th>Gerätename</th><th>TX</th><th>RX</th><th>Aktion</th></tr>
             </thead>
             <tbody></tbody>
           </table>
@@ -154,8 +154,9 @@
     </div>
   </div>
 </div>
-
-  <script src="./Script.js"></script>
-  <script src="./Lib.js"></script>
+  
+<!-- Lib.js MUSS VOR Script.js geladen werden // CACHE-BUST für Dev -->
+<script src="Lib.js?v=dev-V0.0.2"></script>
+<script src="Script.js?v=dev-V0.0.2"></script>
 </body>
 </html>

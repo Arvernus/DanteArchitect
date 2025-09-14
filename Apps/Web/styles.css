@@ -17,6 +17,14 @@ body{ margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvet
 .table th, .table td{ border:1px solid #e9e9e9; padding:6px 8px; text-align:left; }
 .table thead th{ background:#f7f7f7; }
 
+/* 👉 Drop-Feedback für Preset-Tabelle */
+#presetTable.drop-hover{
+  outline: 2px dashed #2979ff;
+  outline-offset: 4px;
+  background: #f6f9ff;
+  transition: background .12s ease;
+}
+
 /* Buttons */
 .btn{ border:1px solid #ccc; background:#f7f7f7; border-radius:6px; padding:6px 10px; cursor:pointer; }
 .btn:hover{ background:#f0f0f0; }
@@ -65,3 +73,49 @@ body.with-right-sidebar .main{ margin-right:320px; }
 .modal-actions{ margin-left:auto; display:flex; align-items:center; gap:8px; }
 .modal-body{ padding:10px 12px; overflow:auto; }
 .chk{ font-size:13px; display:inline-flex; align-items:center; gap:6px; }
+
+
+/* INSERT BELOW: */
+/* --- Inline Dropdown (3-Punkte-Menü) --- */
+.menu { position: relative; display: inline-block; }
+.menu-toggle.btn { min-width: 32px; padding: 4px 8px; }
+.menu.open .menu-list { display: block; }
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  display: none;
+  min-width: 160px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 6px;
+  z-index: 2000;
+}
+.menu-item {
+  width: 100%;
+  display: block;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.menu-item:hover { background: #f5f7fb; }
+
+/* --- Delete Confirm Modal (leichtgewichtige Variante) --- */
+.modal-confirm { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 10000;
+  display: flex; align-items: center; justify-content: center; }
+.modal-confirm .card {
+  width: min(440px, 92vw);
+  background: #fff; border: 1px solid #e5e5e5; border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.2);
+}
+.modal-confirm .hdr { padding: 12px; border-bottom: 1px solid #eee; font-weight: 600; }
+.modal-confirm .body { padding: 12px; }
+.modal-confirm .ftr { padding: 10px 12px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 8px; }
+.modal-confirm .row { margin: 8px 0; }
+.modal-confirm .chk { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #444; }
