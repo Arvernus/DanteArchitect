@@ -219,6 +219,36 @@
   </div>
 </div>
 
+<!-- Define Suffix Modal -->
+<div id="defineSuffixModal" class="modal" style="display:none;">
+  <div class="modal-card" style="width:min(700px,95vw);">
+    <div class="modal-header">
+      <div class="modal-title">Suffix festlegen</div>
+      <div class="modal-actions">
+        <button class="btn" data-role="ds-close">Schließen</button>
+      </div>
+    </div>
+    <div class="modal-body" style="display:grid; grid-template-columns: 1fr; gap:10px;">
+      <label>Aktueller Gerätename (markiere am Ende den Suffix)
+        <input id="dsFull" type="text" spellcheck="false">
+      </label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="dsTakeSelection" class="btn" type="button">Auswahl übernehmen</button>
+        <span class="muted">Tipp: Maus ziehen oder Shift+Pfeile nutzen</span>
+      </div>
+      <label>Suffix (manuell anpassen möglich)
+        <input id="dsSuffix" type="text" spellcheck="false" placeholder="z. B. MainPA oder Amp2-4">
+      </label>
+      <div class="muted">Vorschau:</div>
+      <div id="dsPreview" style="font-family:monospace; white-space:pre-wrap;"></div>
+    </div>
+    <div class="modal-header" style="justify-content:flex-end; gap: 12px; align-items:center;">
+      <button class="btn" data-role="ds-cancel">Abbrechen</button>
+      <button class="btn" id="dsSave">Speichern</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- Lib.js MUSS VOR Script.js geladen werden // CACHE-BUST für Dev -->
 <script src="Lib.js?v=dev-V0.0.2"></script>

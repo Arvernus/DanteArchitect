@@ -130,3 +130,7 @@ body.with-right-sidebar .main{ margin-right:320px; }
 .menu .menu-list{ position:absolute; right:0; top:100%; background:#fff; border:1px solid #e5e5e5; border-radius:8px; padding:8px 10px; display:none; z-index:1000; }
 .menu.open .menu-list{ display:block; }
 .topbar .spacer{ flex:1; }
+
+/* Define Suffix Modal tweaks */
+#dsFull { font-family: monospace; }
+#dsPreview { padding:8px 10px; border:1px solid #eee; border-radius:8px; }

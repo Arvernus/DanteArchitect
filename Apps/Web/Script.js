@@ -14,6 +14,15 @@ function parseXml(text){
   return xml;
 }
 
+function getSelectionInInput(input){
+  return {
+    start: input.selectionStart || 0,
+    end: input.selectionEnd || 0,
+    text: (input.value || "").slice(input.selectionStart || 0, input.selectionEnd || 0)
+  };
+}
+
+
 // === Namenskonzept (global) ===
 var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
 function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_) { return false; } }
@@ -225,7 +234,20 @@ function fillPresetTable(xml){
       try { ensurePresetEnvelope(lastXmlDoc); } catch(_){}
       openReplaceDeviceDialog(name);
     });
-    
+
+    // --- Neues Menü-Item: Suffix festlegen… ---
+    // 'menuList' ist der Container deiner Menüeinträge (ul/div o.ä.)
+    // Falls du Items als Buttons erzeugst, bleib konsistent:
+    var miDefineSuffix = document.createElement("button");
+    miDefineSuffix.className = "menu-item";
+    miDefineSuffix.textContent = "Suffix festlegen…";
+    miDefineSuffix.addEventListener("click", function(){
+      closeAllMenus && closeAllMenus();
+      var currentName = tdName.dataset.fullname || name;
+      window.openDefineSuffixDialog(currentName);
+    });
+
+    list.appendChild(miDefineSuffix);
     list.appendChild(btnReplace);
     list.appendChild(btnDelete);
     menu.appendChild(toggle);
@@ -334,23 +356,33 @@ var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
 function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_) { return false; } }
 function setNameConceptEnabled(on){ try { localStorage.setItem(NAME_SCHEME_KEY, on ? "1" : "0"); } catch(_) {} }
 function splitName(full){
-  full = String(full || "");
+  var s = String(full || "").trim();
+  if (!s) return { prefix: "", suffix: "" };
 
-  // Falls Name auf "-<Zahl>" endet, ist das das [n] und KEIN Suffix.
-  // Optional kann danach noch "-<Suffix>" folgen.
-  // Beispiele:
-  //  "KS-Fmod-xxxx-1"            -> prefix="KS-Fmod-xxxx-1", suffix=""
-  //  "KS-Fmod-xxxx-1-MainPA"     -> prefix="KS-Fmod-xxxx-1", suffix="MainPA"
-  //  "KS-CPD10-xxxx-Alpha"       -> (kein [n] am Ende) -> fallback: prefix="KS-CPD10-xxxx", suffix="Alpha"
-  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
-  if (m) {
-    return { prefix: m[1], suffix: m[2] ? m[2] : "" };
+  // Kandidaten: alle Vorkommen von "-<Ziffern>"
+  // Wir wählen das rechteste, hinter dem im restlichen String noch "-<Buchstabe>" vorkommt.
+  var idxCandidate = -1;
+  var re = /-(\d+)/g, m;
+  while ((m = re.exec(s))) {
+    var afterNumIdx = re.lastIndex;        // Position direkt NACH den Ziffern
+    var rest = s.slice(afterNumIdx);       // Rest danach
+    if (/-[A-Za-z]/.test(rest)) {          // nur Kandidaten akzeptieren, wenn später ein "-<Buchstabe>" folgt
+      idxCandidate = afterNumIdx;
+    }
   }
 
-  // Fallback: letzter Bindestrich trennt Prefix/Suffix
-  var idx = full.lastIndexOf("-");
-  if (idx < 0) return { prefix: full, suffix: "" };
-  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+  if (idxCandidate !== -1) {
+    // Erwartet: direkt danach kommt ein '-' als Trenner zum Suffix
+    if (s.charAt(idxCandidate) === '-') {
+      return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate + 1) };
+    }
+    // Falls kein '-' folgt (unerwartet): Fallback auf einfachen Split
+  }
+
+  // Kein valider [n]-Anker mit folgendem Suffix → Fallback: letzter Bindestrich trennt
+  var idx = s.lastIndexOf("-");
+  if (idx < 0) return { prefix: s, suffix: "" };
+  return { prefix: s.slice(0, idx), suffix: s.slice(idx + 1) };
 }
 function joinName(prefix, suffix){
   prefix = String(prefix||""); suffix = String(suffix||"");
@@ -567,6 +599,61 @@ function deleteDeviceByName(deviceName){
     alert(err.message || String(err));
   }
 }
+  // Benennt ein Gerät im aktuellen Preset um und passt RX-Subscriptions an.
+  // Erwartet volle Namen: oldName = alter vollständiger Gerätename, newName = neuer vollständiger Gerätename.
+  function renameDeviceInPreset(oldName, newName){
+    // Doku / Fallbacks
+    var doc = (typeof lastXmlDoc !== "undefined" && lastXmlDoc) ? lastXmlDoc : null;
+    if (!doc) {
+      try {
+        var xml = sessionStorage.getItem("DA_PRESET_XML");
+        if (xml) {
+          doc = new DOMParser().parseFromString(xml, "application/xml");
+          window.lastXmlDoc = doc;
+        }
+      } catch(_) {}
+    }
+    if (!doc) { alert("Kein Preset geladen."); return; }
+
+    oldName = String(oldName || "").trim();
+    newName = String(newName || "").trim();
+    if (!oldName || !newName || oldName === newName) return;
+
+    // Gerät per Namen finden
+    var devEls = Array.prototype.slice.call(doc.querySelectorAll("preset > device, device"));
+    var dev = null;
+    for (var i=0; i<devEls.length; i++){
+      var nEl = devEls[i].querySelector("name");
+      var t   = nEl && nEl.textContent ? nEl.textContent.trim() : "";
+      if (t === oldName) { dev = devEls[i]; break; }
+    }
+    if (!dev) { alert("Gerät nicht gefunden: " + oldName); return; }
+
+    // Name aktualisieren
+    var nameEl = dev.querySelector("name");
+    if (!nameEl) { nameEl = doc.createElement("name"); dev.insertBefore(nameEl, dev.firstChild); }
+    nameEl.textContent = newName;
+
+    // RX-Subscriptions umbiegen
+    var rxEls = Array.prototype.slice.call(doc.getElementsByTagName("rxchannel"));
+    rxEls.forEach(function(rx){
+      var sd = rx.querySelector("subscribed_device");
+      if (sd && (sd.textContent || "").trim() === oldName) {
+        sd.textContent = newName;
+      }
+    });
+
+    // Persistieren
+    try {
+      var s = new XMLSerializer().serializeToString(doc);
+      try { sessionStorage.setItem("DA_PRESET_XML", s); } catch(_) {}
+    } catch(_) {}
+
+    // UI neu aufbauen
+    if (typeof fillPresetTable === "function") fillPresetTable(doc);
+  }
+
+
 // ===== Replace-Device: Helpers =====
 function getDeviceElByName(doc, deviceName){
   var devs = Array.prototype.slice.call(doc.getElementsByTagName("device"));
@@ -1058,6 +1145,80 @@ if (renameChecked) {
   // Anzeigen
   modal.style.display = "flex";
 }
+
+(function setupDefineSuffixDialog(){
+  var modal = document.getElementById("defineSuffixModal");
+  if (!modal) return;
+
+  var inpFull   = document.getElementById("dsFull");
+  var inpSuffix = document.getElementById("dsSuffix");
+  var btnTake   = document.getElementById("dsTakeSelection");
+  var btnSave   = document.getElementById("dsSave");
+  var prev      = document.getElementById("dsPreview");
+  var btnClose1 = modal.querySelector("[data-role='ds-close']");
+  var btnClose2 = modal.querySelector("[data-role='ds-cancel']");
+
+  var ctx = { oldFull: "", basePrefix: "" };
+
+  function updatePreview(){
+    var suf = (inpSuffix.value || "").trim();
+    var full = joinName(ctx.basePrefix, suf);
+    prev.textContent = full;
+  }
+
+  btnTake.addEventListener("click", function(){
+    var s = getSelectionInInput(inpFull);
+    var full = inpFull.value || "";
+    var sel = (s.text || "").trim();
+
+    if (!sel) { alert("Bitte am Ende des Namens den Suffix markieren."); return; }
+    if (!full.endsWith(sel)) { alert("Die Auswahl muss am Ende des Namens stehen."); return; }
+
+    // führenden '-' bei der Auswahl entfernen
+    var suffix = sel.replace(/^-/,"");
+    // Prefix ist der Rest VOR der Auswahl; ein evtl. verbleibendes trailing '-' am Prefix entfernen
+    var prefRaw = full.slice(0, full.length - sel.length);
+    var basePref = prefRaw.replace(/-$/,"");
+
+    ctx.basePrefix = basePref;
+    inpSuffix.value = suffix;
+    updatePreview();
+  });
+
+  [inpSuffix].forEach(function(el){
+    el.addEventListener("input", updatePreview);
+  });
+
+  function open(fullName){
+    ctx.oldFull = String(fullName || "");
+    // Default-Vorschlag aus splitName
+    var parts = splitName(ctx.oldFull);
+    ctx.basePrefix = parts.prefix || "";
+    inpFull.value = ctx.oldFull;
+    inpSuffix.value = parts.suffix || "";
+    updatePreview();
+    modal.style.display = "";
+  }
+
+  function close(){
+    modal.style.display = "none";
+  }
+
+  if (btnClose1) btnClose1.addEventListener("click", close);
+  if (btnClose2) btnClose2.addEventListener("click", close);
+
+  btnSave.addEventListener("click", function(){
+    var newFull = prev.textContent || "";
+    if (!newFull || newFull === ctx.oldFull){ close(); return; }
+    // Umbenennen im Preset inkl. RX-Subs
+    renameDeviceInPreset(ctx.oldFull, newFull);
+    close();
+  });
+
+  // Expose
+  window.openDefineSuffixDialog = open;
+})();
+
 
 (function bindExport(){
   var be = $("#btnExport"); if(!be) return;

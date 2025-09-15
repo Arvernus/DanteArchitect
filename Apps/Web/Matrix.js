@@ -24,19 +24,33 @@ var frozenRows = null;
 var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
 function nameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_){ return false; } }
 function splitName(full){
-  full = String(full || "");
+  var s = String(full || "").trim();
+  if (!s) return { prefix: "", suffix: "" };
 
-  // [n] ist eine Ziffernfolge direkt vor dem Ende oder vor dem Suffix.
-  // Wenn nur "-<Zahl>" am Ende steht -> kein Suffix.
-  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
-  if (m) {
-    return { prefix: m[1], suffix: m[2] ? m[2] : "" };
+  // Kandidaten: alle Vorkommen von "-<Ziffern>"
+  // Wir wählen das rechteste, hinter dem im restlichen String noch "-<Buchstabe>" vorkommt.
+  var idxCandidate = -1;
+  var re = /-(\d+)/g, m;
+  while ((m = re.exec(s))) {
+    var afterNumIdx = re.lastIndex;        // Position direkt NACH den Ziffern
+    var rest = s.slice(afterNumIdx);       // Rest danach
+    if (/-[A-Za-z]/.test(rest)) {          // nur Kandidaten akzeptieren, wenn später ein "-<Buchstabe>" folgt
+      idxCandidate = afterNumIdx;
+    }
   }
 
-  // Fallback ohne [n] am Ende
-  var idx = full.lastIndexOf("-");
-  if (idx < 0) return { prefix: full, suffix: "" };
-  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+  if (idxCandidate !== -1) {
+    // Erwartet: direkt danach kommt ein '-' als Trenner zum Suffix
+    if (s.charAt(idxCandidate) === '-') {
+      return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate + 1) };
+    }
+    // Falls kein '-' folgt (unerwartet): Fallback auf einfachen Split
+  }
+
+  // Kein valider [n]-Anker mit folgendem Suffix → Fallback: letzter Bindestrich trennt
+  var idx = s.lastIndexOf("-");
+  if (idx < 0) return { prefix: s, suffix: "" };
+  return { prefix: s.slice(0, idx), suffix: s.slice(idx + 1) };
 }
 function joinName(prefix, suffix){
   prefix = String(prefix||""); suffix = String(suffix||"");
