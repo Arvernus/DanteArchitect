@@ -383,6 +383,41 @@ function deviceNameExists(doc, name, excludeName){
   });
 }
 
+// Globale Namensgenerator-Funktion: pattern + [n]/{n}/<n>, optional excludeName ausnehmen
+if (typeof window.generateUniqueNameFromPattern !== "function") {
+  window.generateUniqueNameFromPattern = function(pattern, doc, excludeName) {
+    var pat = String(pattern || "Device-[n]");
+    var hasToken = /\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/.test(pat);
+
+    function makeName(n) {
+      var out = pat.replace(/\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/g, String(n));
+      if (!hasToken) out = out + "-" + String(n); // kein Token → -n anhängen
+      return out;
+    }
+
+    function exists(name) {
+      return Array.prototype.some.call(
+        doc.getElementsByTagName("device"),
+        function(d) {
+          var nmEl = d.querySelector("name");
+          var nm = nmEl && nmEl.textContent ? nmEl.textContent.trim() : "";
+          if (!nm) return false;
+          if (excludeName && nm === excludeName) return false;
+          return nm === name;
+        }
+      );
+    }
+
+    var n = 1, candidate = makeName(n);
+    while (exists(candidate)) {
+      n++;
+      candidate = makeName(n);
+    }
+    return candidate;
+  };
+}
+
+
 // Bei Bedarf eindeutigen Namen erzeugen (Pattern-basiert oder einfache -n-Anhängung)
 function ensureUniqueDeviceName(baseName, doc, excludeName, fallbackPattern){
   if (!deviceNameExists(doc, baseName, excludeName)) return baseName;
@@ -669,68 +704,37 @@ btnDo.onclick = function(){
     var oldTxLabels = txLabelsFromDeviceEl(targetDev);      // exakte Reihenfolge/Bezeichnungen
     var oldRxInfos  = rxInfosFromDeviceEl(targetDev);       // inkl. sd/sc für jeden RX
 
-    // — B) Namen bestimmen (ggf. per Pattern eindeutig) —
-    // — B) Namen bestimmen (ggf. per Pattern eindeutig) —
-    var renameChecked = false;
-    var chk = document.getElementById("repRenameByPattern");
-    if (chk && chk.checked) renameChecked = true;
+// — B) Namen bestimmen (ggf. per Pattern eindeutig) —
+var renameChecked = false;
+// ID in deinem Dialog lautet repRenameByPattern
+var chk = document.getElementById("repRenameByPattern");
+if (chk && chk.checked) renameChecked = true;
 
-    var newName = devName; // Standard: alten Namen behalten
+// Pattern ermitteln: Lib bevorzugen, dann Modell, dann Fallback
+var patFromLib = (window.DA_LIB && typeof window.DA_LIB.getNamePattern === "function")
+  ? (window.DA_LIB.getNamePattern(modelId) || "")
+  : "";
+var pattern =
+  patFromLib ||
+  (m && m.device_defaults && m.device_defaults.name_pattern) ||
+  m.name_pattern ||
+  (m.naming && m.naming.pattern) ||
+  m.pattern ||
+  "Device-[n]";
 
-    if (renameChecked) {
-      // Pattern aus Lib holen (wenn verfügbar), sonst Fallback
-      var patFromLib = (window.DA_LIB && typeof window.DA_LIB.getNamePattern === "function")
-        ? window.DA_LIB.getNamePattern(modelId)
-        : "";
-      var pat = patFromLib || "Device-[n]";
-
-      // Eindeutig über vorhandene Funktion
-      if (typeof generateUniqueNameFromPattern === "function") {
-        newName = generateUniqueNameFromPattern(pat, lastXmlDoc);
-      } else {
-        // Minimal-Fallback (nur falls Helper mal fehlt)
-        newName = pat.replace(/\[(?:n|N)\]/, "1");
-      }
-    } else {
-      // Checkbox OFF: prüfen, ob der alte Name noch woanders verwendet wird
-      // (d. h. von einem zweiten Device – targetDev selbst zählt nicht als Konflikt)
-      var countSame = 0;
-      Array.prototype.forEach.call(lastXmlDoc.getElementsByTagName("device"), function(d){
-        var n = d.querySelector("name");
-        if (n && n.textContent && n.textContent.trim() === devName) countSame++;
-      });
-
-      if (countSame > 1) {
-        // Kollision → automatisch eindeutigen Namen auf Basis des alten Namens bilden.
-        // Trick: vorhandene Funktion wiederverwenden – Pattern OHNE [n] → hängt "-n" an.
-        if (typeof generateUniqueNameFromPattern === "function") {
-          newName = generateUniqueNameFromPattern(devName, lastXmlDoc);
-        } else {
-          // Minimal-Fallback: devName-2, devName-3, ...
-          var n = 2, cand = devName + "-" + n;
-          var exists = function(x){
-            return Array.prototype.some.call(
-              lastXmlDoc.getElementsByTagName("device"),
-              function(d){ var nm = d.querySelector("name"); return nm && nm.textContent.trim() === x; }
-            );
-          };
-          while (exists(cand)) { n++; cand = devName + "-" + n; }
-          newName = cand;
-        }
-      }
-    }
-
-    // Sicherheit: selbst bei Race-Conditions noch mal prüfen (idempotent)
-    if (typeof generateUniqueNameFromPattern === "function") {
-      if (newName && newName.indexOf("[n]") === -1 && newName.indexOf("{n}") === -1 && newName.indexOf("<n>") === -1) {
-        // patternloser Name → gegen Doppelnamen absichern
-        var exists2 = Array.prototype.some.call(
-          lastXmlDoc.getElementsByTagName("device"),
-          function(d){ var nm = d.querySelector("name"); return nm && nm.textContent.trim() === newName; }
-        );
-        if (exists2) newName = generateUniqueNameFromPattern(newName, lastXmlDoc);
-      }
-    }
+var newName;
+if (renameChecked) {
+  // Explizit neu nach Pattern → immer eindeutig und != altem Namen
+  newName = window.generateUniqueNameFromPattern(pattern, lastXmlDoc, /*excludeName*/ devName);
+} else {
+  // Alten Namen behalten, aber auf Eindeutigkeit prüfen
+  newName = ensureUniqueDeviceName(
+    devName,
+    lastXmlDoc,
+    /*excludeName*/ devName,
+    /*fallbackPattern*/ pattern
+  );
+}
 
     // — C) neues Device aus Modell erzeugen —
     var newDev = buildDeviceFromModel(modelId, newName);
@@ -740,6 +744,34 @@ btnDo.onclick = function(){
 
     // — E) neue TX-/RX-Listen aufnehmen —
     var replacedDev = getDeviceElByName(lastXmlDoc, newName);
+
+    // NEU: Checkbox „Kanalnamen aus Modell übernehmen“ (default: aus = alte Namen behalten)
+    var useModelNames = !!(document.getElementById("repChannelNamesFromModel") &&
+                          document.getElementById("repChannelNamesFromModel").checked);
+
+    // Wenn Checkbox AUS → alte TX-Labels / RX-Namen positionsbasiert übernehmen
+    if (!useModelNames) {
+      // TX: alte Labels pro Index übernehmen
+      var txListNew = replacedDev.getElementsByTagName("txchannel");
+      for (var i = 0; i < txListNew.length; i++) {
+        var lblEl = txListNew[i].querySelector("label");
+        if (!lblEl) { lblEl = lastXmlDoc.createElement("label"); txListNew[i].appendChild(lblEl); }
+        var oldLbl = (i < oldTxLabels.length) ? (oldTxLabels[i] || "") : "";
+        if (oldLbl) lblEl.textContent = oldLbl;
+      }
+
+      // RX: alte Namen pro Index übernehmen
+      var rxListNewForNames = replacedDev.getElementsByTagName("rxchannel");
+      for (var j = 0; j < rxListNewForNames.length; j++) {
+        var nameEl = rxListNewForNames[j].querySelector("name");
+        if (!nameEl) { nameEl = lastXmlDoc.createElement("name"); rxListNewForNames[j].appendChild(nameEl); }
+        var oldRxName = (j < oldRxInfos.length) ? (oldRxInfos[j].name || "") : "";
+        if (oldRxName) nameEl.textContent = oldRxName;
+      }
+    }
+
+    // WICHTIG: erst jetzt (nach möglicher Umbenennung) die neuen TX-Labels/ RX-Liste ermitteln,
+    // damit das anschließende Mapping die gesetzten Labels berücksichtigt.
     var newTxLabels = txLabelsFromDeviceEl(replacedDev);
     var newRxList   = Array.prototype.slice.call(replacedDev.getElementsByTagName("rxchannel"));
 
@@ -948,41 +980,6 @@ document.addEventListener("visibilitychange", function() {
     return lastXmlDoc;
   }
 
- function generateUniqueNameFromPattern(pattern, doc){
-  // 1) Pattern normalisieren (Fallback ohne 'xxxx', damit wir es nicht versehentlich befüllen)
-  var pat = String(pattern || "Device-[n]");
-
-  // 2) Prüfen, ob ein [n]-Platzhalter (auch Varianten wie {n} / <n>) enthalten ist
-  var hasNToken = /\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/.test(pat);
-
-  // 3) Helfer zum Ersetzen des Zählers, 'xxxx' bleibt UNVERÄNDERT (Design-Vorgabe)
-  function makeName(n){
-    var out = pat.replace(/\[(?:n|N)\]|\{(?:n|N)\}|<(?:n|N)>/g, String(n));
-    if (!hasNToken) {
-      // falls kein n-Token im Pattern vorhanden ist, hänge zur Eindeutigkeit -n an
-      out = out + "-" + String(n);
-    }
-    return out;
-  }
-
-  // 4) vorhandene Namen einsammeln
-  var existing = new Set(Array.prototype.map.call(
-    doc.getElementsByTagName("device"),
-    function(d){
-      var n = d.querySelector("name");
-      return n && n.textContent ? n.textContent.trim() : "";
-    }
-  ));
-
-  // 5) freie Nummer finden
-  var n = 1, candidate = makeName(n);
-  while (existing.has(candidate)) {
-    n++;
-    candidate = makeName(n);
-  }
-  return candidate;
-}
-
 
   function addDeviceFromModelId(modelId){
     if(!window.DA_LIB || !window.DA_LIB.makeDeviceXml){ alert("Library-Modul fehlt."); return; }
@@ -1015,7 +1012,8 @@ modelId = (modelId || '').trim();
       pattern = 'Device-[n]';
     } else {
       console.debug('[Architect] Name-Pattern aus Lib:', pattern, 'modelId=', modelId);
-    }    var deviceName = generateUniqueNameFromPattern(pattern, doc);
+    }    var deviceName = window.generateUniqueNameFromPattern(pattern, doc, /*excludeName*/ null);
+
 
     
     // Device-XML erzeugen
