@@ -13,6 +13,27 @@ function parseXml(text){
   var err = xml.querySelector("parsererror"); if(err) throw new Error("XML Parser Error: " + err.textContent);
   return xml;
 }
+
+// === Namenskonzept (global) ===
+var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
+function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_) { return false; } }
+function setNameConceptEnabled(on){ try { localStorage.setItem(NAME_SCHEME_KEY, on ? "1" : "0"); } catch(_) {} }
+
+// [n]-sicheres Splitten: Suffix beginnt erst NACH "-<Zahl>-..."
+function splitName(full){
+  full = String(full || "");
+  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
+  if (m) return { prefix: m[1], suffix: m[2] ? m[2] : "" };
+  var idx = full.lastIndexOf("-");
+  if (idx < 0) return { prefix: full, suffix: "" };
+  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+}
+function joinName(prefix, suffix){
+  prefix = String(prefix || ""); suffix = String(suffix || "");
+  return suffix ? (prefix + "-" + suffix) : prefix;
+}
+
+
 // Serialisieren mit XML-Header (UTF-8 + standalone="yes")
 function serializeWithHeader(xmlDoc){
   var xml = new XMLSerializer().serializeToString(xmlDoc);
@@ -135,8 +156,29 @@ function fillPresetTable(xml){
 
     var tr = document.createElement("tr");
 
+    // --- Namezelle (nur Anzeige; Prefix/Suffix-Stack) ---
     var tdName = document.createElement("td");
-    tdName.textContent = name;
+    tdName.className = "preset-name";
+    tdName.dataset.role = "preset-name";
+    tdName.dataset.fullname = name; // für Aktionen (Löschen/Ersetzen)
+
+    if (isNameConceptEnabled()) {
+      var parts = splitName(name || "");
+      var wrap  = document.createElement("span"); wrap.className = "name-stack";
+      var top   = document.createElement("span"); top.className  = "name-prefix";
+      var bot   = document.createElement("span"); bot.className  = "name-suffix";
+
+      // Bindestrich in der oberen Zeile nur, wenn Suffix existiert
+      top.textContent = parts.prefix + (parts.suffix ? "-" : "");
+      bot.textContent = parts.suffix || "";
+
+      wrap.appendChild(top);
+      if (parts.suffix) wrap.appendChild(bot);
+      tdName.appendChild(wrap);
+    } else {
+      // Namenskonzept AUS: einzeilig
+      tdName.textContent = name || "";
+    }
 
     var tdTx = document.createElement("td");
     tdTx.textContent = tx;
@@ -255,6 +297,36 @@ function readFromSession(){
   });
 })();
 
+// === Einstellungen (Gear) ===
+(function(){
+  var btn = document.getElementById("btnSettings");
+  var menu = document.getElementById("settingsMenu");
+  var chk = document.getElementById("chkNameConcept");
+  if (!menu || !chk) return;
+
+  // Init
+  try { chk.checked = isNameConceptEnabled(); } catch(_){}
+
+  // Toggle open/close
+  if (btn){
+    btn.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      if (typeof closeAllMenus === "function") closeAllMenus();
+      menu.classList.toggle("open");
+    });
+  }
+
+  // Persist + Re-Render der Preset-Tabelle
+  chk.addEventListener("change", function(e){
+    setNameConceptEnabled(!!e.target.checked);
+    if (lastXmlDoc) fillPresetTable(lastXmlDoc);
+  });
+
+  // Click außerhalb schließt Menü
+  document.addEventListener("click", function(){ menu.classList.remove("open"); });
+})();
+
+
 // ---- Export ----
 
 // === Namenskonzept (global) ===
@@ -284,6 +356,88 @@ function joinName(prefix, suffix){
   prefix = String(prefix||""); suffix = String(suffix||"");
   return suffix ? (prefix + "-" + suffix) : prefix;
 }
+
+// --- Preset-Tabelle: Name-Stack Renderer ---
+function renderNameStackNode(fullName, opts){
+  opts = opts || {};
+  var parts = splitName(fullName || "");
+  // Wenn Namenskonzept AUS -> einzeilig
+  if (!isNameConceptEnabled()){
+    var span = document.createElement("span");
+    span.textContent = fullName || "";
+    if (opts.editable){
+      span.className = "editable";
+      span.contentEditable = "true";
+      if (opts.onApply) bindInlineEdit(span, opts.onApply);
+    }
+    return span;
+  }
+  // Namenskonzept AN -> zweizeilig Prefix/Suffix
+  var wrap  = document.createElement("span"); wrap.className = "name-stack";
+  var top   = document.createElement("span"); top.className  = "name-prefix"; top.textContent = parts.prefix || "";
+  var bot   = document.createElement("span"); bot.className  = "name-suffix";
+  bot.textContent = parts.suffix || "";
+  if (opts.editable){
+    bot.classList.add("editable");
+    bot.contentEditable = "true";
+    if (opts.onApply){
+      bindInlineEdit(bot, function(v){
+        // Nur Suffix ändern
+        var newFull = joinName(parts.prefix, v);
+        opts.onApply(newFull, v); // (voller Name, Suffix)
+      });
+    }
+  }
+  wrap.appendChild(top); wrap.appendChild(bot);
+  return wrap;
+}
+
+// Kleine Edit-Bindung für Inline-Apply
+function bindInlineEdit(el, apply){
+  var done = false;
+  function finish(){
+    if(done) return;
+    done = true;
+    el.removeEventListener("blur", onBlur);
+    el.removeEventListener("keydown", onKey);
+    var val = (el.textContent||"").trim();
+    apply(val);
+  }
+  function onBlur(){ finish(); }
+  function onKey(e){ if(e.key === "Enter"){ e.preventDefault(); el.blur(); } }
+  el.addEventListener("blur", onBlur);
+  el.addEventListener("keydown", onKey);
+}
+
+// Dekoriert die Namen in der Preset-Tabelle zu Prefix/Suffix-Stack
+function decoratePresetTableNames(){
+  // Versuche gängige Selektoren (bitte ggf. anpassen):
+  var roots = document.querySelectorAll(".preset-table, #tblPresets, table[data-role='presets']");
+  if (!roots.length) return;
+
+  roots.forEach(function(root){
+    // Name-Spalte finden: td/ span mit Datenrolle oder Klassen
+    var cells = root.querySelectorAll("[data-role='preset-name'], td.preset-name, td.col-name, td.name");
+    cells.forEach(function(td){
+      var fullName = td.dataset.fullname || td.textContent.trim();
+      // Ersetze Inhalt
+      td.innerHTML = "";
+      // Falls du hier direkt speichern willst, onApply an dein Rename hängen:
+      var stack = renderNameStackNode(fullName, {
+        editable: true,
+        onApply: function(newFull){
+          // Optional: hier deine Umbenennung für Presetliste
+          td.dataset.fullname = newFull;
+          td.textContent = ""; td.appendChild(renderNameStackNode(newFull, { editable:true, onApply: arguments.callee }));
+          // Falls es eine persistente Quelle gibt, hier aufrufen (z. B. savePresetName(...))
+        }
+      });
+      td.appendChild(stack);
+    });
+  });
+}
+
+
 // Settings-Menü in der Topbar
 (function bindSettingsMenu(){
   var btn = document.getElementById("btnSettings");
@@ -303,6 +457,8 @@ function joinName(prefix, suffix){
   // persist
   chk.addEventListener("change", function(e){
     setNameConceptEnabled(!!e.target.checked);
+    // Darstellung sofort aktualisieren:
+    decoratePresetTableNames();
   });
 })();
 
@@ -983,6 +1139,7 @@ function hydratePresetFromStorage() {
     if (!s) return;
     lastXmlDoc = parseXml(s);
     fillPresetTable(lastXmlDoc);
+    decoratePresetTableNames();
   } catch(_){ /* ignore */ }
 }
 
