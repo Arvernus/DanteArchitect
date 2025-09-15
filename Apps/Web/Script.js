@@ -42,6 +42,23 @@ function joinName(prefix, suffix){
   return suffix ? (prefix + "-" + suffix) : prefix;
 }
 
+// Ist der Gerätename noch „virtuell“ (Default-Pattern im Prefix / Platzhalter 'xxxx')?
+function isVirtualName(fullName){
+  var s = String(fullName || "");
+  // Nutze splitName, falls vorhanden – sonst einfacher Fallback:
+  var parts;
+  try { parts = splitName ? splitName(s) : { prefix: s, suffix: "" }; } catch(_) { parts = { prefix: s, suffix: "" }; }
+  var pref = (parts.prefix || "").toLowerCase();
+
+  // Platzhalter 'xxxx' im Prefix → virtuell
+  if (/(^|-)xxxx($|-)/.test(pref)) return true;
+
+  // Default-Pattern startet oft mit 'Device-...' → virtuell
+  if (s.toLowerCase().startsWith("device-")) return true;
+
+  return false;
+}
+
 
 // Serialisieren mit XML-Header (UTF-8 + standalone="yes")
 function serializeWithHeader(xmlDoc){
@@ -188,6 +205,15 @@ function fillPresetTable(xml){
       // Namenskonzept AUS: einzeilig
       tdName.textContent = name || "";
     }
+    // Virtual-Badge anzeigen, falls Name noch Platzhalter/Default trägt
+    try {
+      if (isVirtualName(name)) {
+        var badge = document.createElement("span");
+        badge.className = "badge-virtual";
+        badge.textContent = "Virtual";
+        tdName.appendChild(badge);
+      }
+    } catch(_){}
 
     var tdTx = document.createElement("td");
     tdTx.textContent = tx;

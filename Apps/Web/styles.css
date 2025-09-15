@@ -134,3 +134,16 @@ body.with-right-sidebar .main{ margin-right:320px; }
 /* Define Suffix Modal tweaks */
 #dsFull { font-family: monospace; }
 #dsPreview { padding:8px 10px; border:1px solid #eee; border-radius:8px; }
+
+/* Badge: Virtual */
+.badge-virtual{
+  display:inline-block;
+  padding:2px 6px;
+  border-radius:6px;
+  background:#ffeb3b; /* gelb */
+  color:#000;         /* schwarz */
+  font-size:12px;
+  line-height:1.2;
+  margin-left:8px;
+  vertical-align:middle;
+}
