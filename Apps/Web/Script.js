@@ -256,6 +256,56 @@ function readFromSession(){
 })();
 
 // ---- Export ----
+
+// === Namenskonzept (global) ===
+var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
+function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_) { return false; } }
+function setNameConceptEnabled(on){ try { localStorage.setItem(NAME_SCHEME_KEY, on ? "1" : "0"); } catch(_) {} }
+function splitName(full){
+  full = String(full || "");
+
+  // Falls Name auf "-<Zahl>" endet, ist das das [n] und KEIN Suffix.
+  // Optional kann danach noch "-<Suffix>" folgen.
+  // Beispiele:
+  //  "KS-Fmod-xxxx-1"            -> prefix="KS-Fmod-xxxx-1", suffix=""
+  //  "KS-Fmod-xxxx-1-MainPA"     -> prefix="KS-Fmod-xxxx-1", suffix="MainPA"
+  //  "KS-CPD10-xxxx-Alpha"       -> (kein [n] am Ende) -> fallback: prefix="KS-CPD10-xxxx", suffix="Alpha"
+  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
+  if (m) {
+    return { prefix: m[1], suffix: m[2] ? m[2] : "" };
+  }
+
+  // Fallback: letzter Bindestrich trennt Prefix/Suffix
+  var idx = full.lastIndexOf("-");
+  if (idx < 0) return { prefix: full, suffix: "" };
+  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+}
+function joinName(prefix, suffix){
+  prefix = String(prefix||""); suffix = String(suffix||"");
+  return suffix ? (prefix + "-" + suffix) : prefix;
+}
+// Settings-Menü in der Topbar
+(function bindSettingsMenu(){
+  var btn = document.getElementById("btnSettings");
+  var wrap = document.getElementById("settingsMenu");
+  var chk = document.getElementById("chkNameConcept");
+  if (!wrap || !chk) return;
+  // init
+  try { chk.checked = isNameConceptEnabled(); } catch(_){}
+  // open/close
+  if (btn){
+    btn.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      closeAllMenus();
+      wrap.classList.toggle("open");
+    });
+  }
+  // persist
+  chk.addEventListener("change", function(e){
+    setNameConceptEnabled(!!e.target.checked);
+  });
+})();
+
 // -- Schließe alle offenen 3-Punkte-Menüs (Dropdowns) --
 function closeAllMenus(){
   try {
@@ -724,17 +774,19 @@ var pattern =
 
 var newName;
 if (renameChecked) {
-  // Explizit neu nach Pattern → immer eindeutig und != altem Namen
-  newName = window.generateUniqueNameFromPattern(pattern, lastXmlDoc, /*excludeName*/ devName);
+  // Explizit neu nach Pattern
+  if (isNameConceptEnabled()) {
+    // Suffix des alten Namens beibehalten
+    var partsOld = splitName(devName);
+    var patternWithSuffix = partsOld.suffix ? (pattern + "-" + partsOld.suffix) : pattern;
+    newName = window.generateUniqueNameFromPattern(patternWithSuffix, lastXmlDoc, /*excludeName*/ devName);
+  } else {
+    newName = window.generateUniqueNameFromPattern(pattern, lastXmlDoc, /*excludeName*/ devName);
+  }
 } else {
-  // Alten Namen behalten, aber auf Eindeutigkeit prüfen
-  newName = ensureUniqueDeviceName(
-    devName,
-    lastXmlDoc,
-    /*excludeName*/ devName,
-    /*fallbackPattern*/ pattern
-  );
+  newName = keepName;
 }
+
 
     // — C) neues Device aus Modell erzeugen —
     var newDev = buildDeviceFromModel(modelId, newName);

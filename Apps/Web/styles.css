@@ -17,6 +17,11 @@ body{ margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvet
 .table th, .table td{ border:1px solid #e9e9e9; padding:6px 8px; text-align:left; }
 .table thead th{ background:#f7f7f7; }
 
+/* Preset-Tabelle: Prefix/Suffix-Stack */
+.preset-table .name-stack{ display:inline-flex; flex-direction:column; line-height:1.05; vertical-align:middle; }
+.preset-table .name-stack .name-prefix{ font-size:12px; opacity:.7; }
+.preset-table .name-stack .name-suffix.editable[contenteditable="true"]{ outline:1px dashed #bcd; background:#fff; }
+
 /* 👉 Drop-Feedback für Preset-Tabelle */
 #presetTable.drop-hover{
   outline: 2px dashed #2979ff;

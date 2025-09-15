@@ -19,6 +19,31 @@ var frozenCols = null;
 var frozenRows = null;
 
 // --------- Helpers ----------
+
+// --- Namenskonzept Helpers ---
+var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
+function nameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_){ return false; } }
+function splitName(full){
+  full = String(full || "");
+
+  // [n] ist eine Ziffernfolge direkt vor dem Ende oder vor dem Suffix.
+  // Wenn nur "-<Zahl>" am Ende steht -> kein Suffix.
+  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
+  if (m) {
+    return { prefix: m[1], suffix: m[2] ? m[2] : "" };
+  }
+
+  // Fallback ohne [n] am Ende
+  var idx = full.lastIndexOf("-");
+  if (idx < 0) return { prefix: full, suffix: "" };
+  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+}
+function joinName(prefix, suffix){
+  prefix = String(prefix||""); suffix = String(suffix||"");
+  return suffix ? (prefix + "-" + suffix) : prefix;
+}
+
+
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
 function norm(s){ return (s||"").toLowerCase(); }
@@ -201,123 +226,267 @@ function freezeVisible(base){
 function renderMatrix(){
   var thead = $("#thead"), tbody = $("#tbody");
   if(!thead || !tbody) return;
-  thead.innerHTML = ""; tbody.innerHTML  = "";
+  thead.innerHTML = ""; 
+  tbody.innerHTML  = "";
 
   var base = computeVisibleBase();
   var visCols = base.visCols.slice();
   var visRows = base.visRows.slice();
 
-  if(frozenCols){ visCols = visCols.filter(function(c){ return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id))); }); }
-  if(frozenRows){ visRows = visRows.filter(function(r){ return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id))); }); }
+  if (frozenCols){
+    visCols = visCols.filter(function(c){
+      return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
+    });
+  }
+  if (frozenRows){
+    visRows = visRows.filter(function(r){
+      return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
+    });
+  }
 
+  // ----- Kopfzeile bauen -----
   var tr0 = cel("tr");
   var thRXDev = cel("th","top-left-0","RX Gerät"); thRXDev.style.minWidth="220px";
   var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
-  tr0.appendChild(thRXDev); tr0.appendChild(thRXChan);
+  tr0.appendChild(thRXDev); 
+  tr0.appendChild(thRXChan);
 
+  // TX-Spalten nach Geräten gruppieren
   var groupRuns = [], run = null;
-  for(var cidx=0;cidx<visCols.length;cidx++){
+  for (var cidx=0; cidx<visCols.length; cidx++){
     var c = visCols[cidx];
     var dIdx = c.devIndex;
-    if(!run || run.devIndex !== dIdx){
+    if (!run || run.devIndex !== dIdx){
       run = { name: c.dev.name, dev: c.dev, devIndex: dIdx, cols: [], count: 0 };
       groupRuns.push(run);
     }
-    run.cols.push(c); run.count++;
+    run.cols.push(c); 
+    run.count++;
   }
 
-  for(var g=0; g<groupRuns.length; g++){
+  // TX-Gruppen-Header rendern
+  for (var g=0; g<groupRuns.length; g++){
     var grp = groupRuns[g];
-    var th = cel("th","group"); th.colSpan = grp.count; th.style.background = "#f0f0f0";
+    var th = cel("th","group"); 
+    th.colSpan = grp.count; 
+    th.style.background = "#f0f0f0";
+
     var toggle = cel("button","btn", collapsedTx[grp.devIndex] ? "+" : "–");
-    toggle.dataset.role = "toggle-tx"; toggle.dataset.devIndex = String(grp.devIndex); toggle.style.marginRight = "6px";
-    var span = cel("span","editable", grp.name || "(ohne Name)");
-    span.dataset.role = "dev-name-tx"; span.dataset.devIndex = String(grp.devIndex);
-    if(editNamesEnabled){ span.contentEditable = "true"; }
-    th.appendChild(toggle); th.appendChild(span); tr0.appendChild(th);
+    toggle.dataset.role = "toggle-tx"; 
+    toggle.dataset.devIndex = String(grp.devIndex); 
+    toggle.style.marginRight = "6px";
+
+    var partsTX = splitName(grp.name || "");
+    var stackTX = cel("span","name-stack","");
+    var topTX = cel("span","name-prefix", partsTX.prefix || "");
+    var botTX = cel("span","name-suffix editable", partsTX.suffix || "");
+
+    if (editNamesEnabled){
+      if (nameConceptEnabled()){
+        botTX.dataset.role = "dev-suffix-tx";
+        botTX.dataset.devIndex = String(grp.devIndex);
+        botTX.contentEditable = "true";
+      } else {
+        // Fallback: kompletter Name editierbar
+        botTX.textContent = grp.name || "(ohne Name)";
+        botTX.dataset.role = "dev-name-tx";
+        botTX.dataset.devIndex = String(grp.devIndex);
+        botTX.contentEditable = "true";
+        topTX.textContent = ""; // keine zweizeilige Darstellung nötig
+      }
+    } else {
+      // Anzeige ohne Edit
+      if (!nameConceptEnabled()){
+        botTX.textContent = grp.name || "(ohne Name)";
+        topTX.textContent = "";
+      }
+    }
+
+    stackTX.appendChild(topTX);
+    stackTX.appendChild(botTX);
+    th.appendChild(toggle);
+    th.appendChild(stackTX);
+    tr0.appendChild(th);
   }
 
+  // WICHTIG: Kopfzeile an <thead> anhängen
+  thead.appendChild(tr0);
+
+  // Zweite Kopfzeile: TX-Kanalnamen
   var tr1 = cel("tr");
+
+  // Platzhalter für RX-Gerät und RX-Kanal-Spalten
   tr1.appendChild(cel("th","rowhead",""));
   tr1.appendChild(cel("th","rowchan",""));
-  for(var i=0;i<visCols.length;i++){
+
+  // Für jede sichtbare TX-Spalte die Kanal-Headerzelle setzen
+  for (var i = 0; i < visCols.length; i++) {
     var cc = visCols[i];
-    var thc = cel("th","tx-chan");
+    var thChan = cel("th","tx-chan","");
     if (cc.isDevice) {
-      thc.style.background = "#f7f7f7";
-      thc.textContent = "";
+      thChan.style.background = "#f7f7f7";
+      thChan.textContent = "";
     } else {
       var spc = cel("span","editable", cc.tx.label || "");
       spc.dataset.role = "tx-chan";
       spc.dataset.devIndex = String(cc.devIndex);
       spc.dataset.chanId   = String(cc.tx.id);
-      if(editNamesEnabled){ spc.contentEditable = "true"; }
-      thc.appendChild(spc);
+      if (editNamesEnabled) { spc.contentEditable = "true"; }
+      thChan.appendChild(spc);
     }
-    tr1.appendChild(thc);
+    tr1.appendChild(thChan);
   }
 
-  thead.appendChild(tr0);
   thead.appendChild(tr1);
 
-  for(var r=0; r<visRows.length; r++){
+
+  // ----- Tabellenkörper bauen -----
+  for (var r=0; r<visRows.length; r++){
     var row = visRows[r];
     var tr = cel("tr");
 
-    var thD = cel("th","rowhead"); thD.style.background = "#f0f0f0";
+    var thD = cel("th","rowhead"); 
+    thD.style.background = "#f0f0f0";
     var toggleRx = cel("button","btn", collapsedRx[row.devIndex] ? "+" : "–");
-    toggleRx.dataset.role = "toggle-rx"; toggleRx.dataset.devIndex = String(row.devIndex); toggleRx.style.marginRight = "6px";
-    var dspan = cel("span","editable", row.dev.name || "(ohne Name)");
-    dspan.dataset.role = "dev-name-rx"; dspan.dataset.devIndex = String(row.devIndex);
-    if(editNamesEnabled){ dspan.contentEditable = "true"; }
-    thD.appendChild(toggleRx); thD.appendChild(dspan); tr.appendChild(thD);
+    toggleRx.dataset.role = "toggle-rx"; 
+    toggleRx.dataset.devIndex = String(row.devIndex); 
+    toggleRx.style.marginRight = "6px";
 
-    var thC = cel("th","rowchan");
-    if (row.isDevice) { thC.style.background = "#f7f7f7"; thC.textContent = ""; }
-    else {
+    var partsRX = splitName(row.dev.name || "");
+    var stackRX = cel("span","name-stack","");
+    var topRX = cel("span","name-prefix", partsRX.prefix || "");
+    var botRX = cel("span","name-suffix editable", partsRX.suffix || "");
+
+    if (editNamesEnabled){
+      if (nameConceptEnabled()){
+        botRX.dataset.role = "dev-suffix-rx";
+        botRX.dataset.devIndex = String(row.devIndex);
+        botRX.contentEditable = "true";
+      } else {
+        botRX.textContent = row.dev.name || "(ohne Name)";
+        botRX.dataset.role = "dev-name-rx";
+        botRX.dataset.devIndex = String(row.devIndex);
+        botRX.contentEditable = "true";
+        topRX.textContent = "";
+      }
+    } else {
+      if (!nameConceptEnabled()){
+        botRX.textContent = row.dev.name || "(ohne Name)";
+        topRX.textContent = "";
+      }
+    }
+
+    stackRX.appendChild(topRX);
+    stackRX.appendChild(botRX);
+    thD.appendChild(toggleRx);
+    thD.appendChild(stackRX);
+    tr.appendChild(thD);
+
+    // Zweite Kopfspalte: RX-Kanalname (oder leer bei Gerätezeile)
+    var thC = cel("th","rowchan","");
+    if (row.isDevice) {
+      thC.style.background = "#f7f7f7";
+      thC.textContent = "";
+    } else {
       var cspan = cel("span","editable", row.rx.name || "");
-      cspan.dataset.role = "rx-chan"; cspan.dataset.devIndex = String(row.devIndex); cspan.dataset.chanId   = String(row.rx.id);
-      if(editNamesEnabled){ cspan.contentEditable = "true"; }
+      cspan.dataset.role = "rx-chan";
+      cspan.dataset.devIndex = String(row.devIndex);
+      cspan.dataset.chanId   = String(row.rx.id);
+      if (editNamesEnabled) { cspan.contentEditable = "true"; }
       thC.appendChild(cspan);
     }
     tr.appendChild(thC);
 
-    for(var x=0; x<visCols.length; x++){
+
+    // Zellen
+    for (var x=0; x<visCols.length; x++){
       var col = visCols[x];
       var cellEditable = (editSubsEnabled && !row.isDevice && !col.isDevice);
       var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
+
       var isSub = (!row.isDevice && !col.isDevice) &&
                   (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
-      if(isSub){ td.appendChild(cel("span","dot","")); }
+      if (isSub){ td.appendChild(cel("span","dot","")); }
+
       td.dataset.role = "cell";
       td.dataset.rxDevIndex = String(row.devIndex);
       td.dataset.rxChanId   = row.isDevice ? "" : String(row.rx.id);
       td.dataset.txDevIndex = String(col.devIndex);
       td.dataset.txChanId   = col.isDevice ? "" : String(col.tx.id);
+
       tr.appendChild(td);
     }
 
-    $("#tbody").appendChild(tr);
+    tbody.appendChild(tr);
   }
 
-  // Delegierte Interaktion
+  // ----- Delegierte Interaktion -----
   var theadEl = $("#thead"), tbodyEl = $("#tbody");
   theadEl.onclick = tbodyEl.onclick = function(ev){
-    var t = ev.target; if(!t || !t.dataset) return;
+    var t = ev.target; 
+    if(!t || !t.dataset) return;
 
-    if(t.dataset.role === "toggle-tx"){ var di = parseInt(t.dataset.devIndex,10); collapsedTx[di] = !collapsedTx[di]; renderMatrix(); return; }
-    if(t.dataset.role === "toggle-rx"){ var di2= parseInt(t.dataset.devIndex,10); collapsedRx[di2] = !collapsedRx[di2]; renderMatrix(); return; }
-
-    if(editNamesEnabled){
-      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(v){ renameDevice(t,"tx",v); }); return; }
-      if(t.dataset.role === "tx-chan"){ makeEditable(t, function(v){ renameTxChannel(t,v); }); return; }
-      if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(v){ renameDevice(t,"rx",v); }); return; }
-      if(t.dataset.role === "rx-chan"){ makeEditable(t, function(v){ renameRxChannel(t,v); }); return; }
+    if (t.dataset.role === "toggle-tx"){ 
+      var di = parseInt(t.dataset.devIndex,10); 
+      collapsedTx[di] = !collapsedTx[di]; 
+      renderMatrix(); 
+      return; 
+    }
+    if (t.dataset.role === "toggle-rx"){ 
+      var di2 = parseInt(t.dataset.devIndex,10); 
+      collapsedRx[di2] = !collapsedRx[di2]; 
+      renderMatrix(); 
+      return; 
     }
 
-    if(editSubsEnabled && t.dataset.role === "cell"){
-      if(!t.dataset.rxChanId || !t.dataset.txChanId) return;
-      toggleSubscription(t); return;
+    if (editNamesEnabled) {
+      // Altes Verhalten (Namenskonzept AUS): kompletter Name editierbar
+      if (t.dataset.role === "dev-name-tx") { 
+        makeEditable(t, function(v){ renameDevice(t, "tx", v); }); 
+        return; 
+      }
+      if (t.dataset.role === "tx-chan") { 
+        makeEditable(t, function(v){ renameTxChannel(t, v); }); 
+        return; 
+      }
+      if (t.dataset.role === "dev-name-rx") { 
+        makeEditable(t, function(v){ renameDevice(t, "rx", v); }); 
+        return; 
+      }
+      if (t.dataset.role === "rx-chan") { 
+        makeEditable(t, function(v){ renameRxChannel(t, v); }); 
+        return; 
+      }
+
+      // Neues Verhalten (Namenskonzept AN): nur Suffix editieren
+      if (t.dataset.role === "dev-suffix-tx") {
+        makeEditable(t, function(v){
+          var di = parseInt(t.dataset.devIndex, 10);
+          if (isNaN(di) || !devices[di]) return;
+          var dev = devices[di];
+          var p = splitName(dev.name || "");
+          var newFull = joinName(p.prefix, v);
+          renameDevice(t, "tx", newFull);
+        });
+        return;
+      }
+      if (t.dataset.role === "dev-suffix-rx") {
+        makeEditable(t, function(v){
+          var di = parseInt(t.dataset.devIndex, 10);
+          if (isNaN(di) || !devices[di]) return;
+          var dev = devices[di];
+          var p = splitName(dev.name || "");
+          var newFull = joinName(p.prefix, v);
+          renameDevice(t, "rx", newFull);
+        });
+        return;
+      }
+    }
+
+    if (editSubsEnabled && t.dataset.role === "cell"){
+      if (!t.dataset.rxChanId || !t.dataset.txChanId) return;
+      toggleSubscription(t); 
+      return;
     }
   };
 }
