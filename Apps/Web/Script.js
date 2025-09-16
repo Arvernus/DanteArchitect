@@ -14,6 +14,34 @@ function parseXml(text){
   return xml;
 }
 
+// Legt bei Bedarf ein leeres <preset/> an und persistiert es.
+function ensurePresetDoc(){
+  if (window.lastXmlDoc) return window.lastXmlDoc;
+  var doc = (new DOMParser()).parseFromString("<preset/>", "application/xml");
+  window.lastXmlDoc = doc;
+  try { sessionStorage.setItem("DA_PRESET_XML", new XMLSerializer().serializeToString(doc)); } catch(_){}
+  return doc;
+}
+
+// === Model-Library: Liste robust holen ===
+function getModelLibListOrThrow(){
+  if (!window.DA_LIB) {
+    throw new Error("Model-Library fehlt (DA_LIB nicht gefunden).");
+  }
+  // moderne API in deiner Lib.js:
+  if (typeof DA_LIB.listModels === "function") {
+    return DA_LIB.listModels();
+  }
+  // ältere/alternative Namen:
+  if (typeof DA_LIB.load === "function")  return DA_LIB.load();
+  if (typeof DA_LIB.getAll === "function") return DA_LIB.getAll();
+  if (typeof DA_LIB.list === "function")   return DA_LIB.list();
+  if (DA_LIB.state && Array.isArray(DA_LIB.state.list)) return DA_LIB.state.list;
+
+  throw new Error("Model-Library fehlt (keine listModels()/load()/getAll()/list() gefunden).");
+}
+
+
 function getSelectionInInput(input){
   return {
     start: input.selectionStart || 0,
@@ -199,7 +227,7 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
       alert("Kein Preset geladen.");
       return;
     }
-    modal.style.display = "";
+    modal.style.display = "flex";
   });
   if(closeBtn) closeBtn.addEventListener("click", function(){ modal.style.display = "none"; });
 
@@ -210,7 +238,7 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
         window.DA_DEVLIB.addDevicesFromPreset(window.lastXmlDoc, { nameConcept: !!(respect && respect.checked) });
         modal.style.display = "none";
         // Sidebar (Device) aktualisieren
-        window.DA_DEVLIB.renderSidebarList("#devSidebarBody");
+        window.DA_DEVLIB.renderSidebarList("#devSidebarBody", window.lastXmlDoc);
         var countAfter = (window.DA_DEVLIB.load()||[]).length;
         alert((countAfter - countBefore) + " Geräte übernommen.");
       }catch(e){
@@ -222,8 +250,16 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
 
 // --- Initial beide Sidebars füllen ---
 (function renderLibraries(){
-  try { window.DA_LIB && window.DA_LIB.renderSidebar && window.DA_LIB.renderSidebar("#libSidebarBody"); } catch(_){}
-  try { window.DA_DEVLIB && window.DA_DEVLIB.renderSidebarList("#devSidebarBody"); } catch(_){}
+  try {
+    if (window.DA_LIB){
+      if (typeof DA_LIB.renderSidebar === "function"){
+        DA_LIB.renderSidebar("#libSidebarBody");
+      } else if (typeof DA_LIB.renderSidebarInto === "function"){
+        DA_LIB.renderSidebarInto("#libSidebarBody");
+      }
+    }
+  } catch(_){}
+  try { window.DA_DEVLIB && window.DA_DEVLIB.renderSidebarList && window.DA_DEVLIB.renderSidebarList("#devSidebarBody", window.lastXmlDoc); } catch(_){}
 })();
 
 // --- Device Sidebar Actions (Delegation) ---
@@ -271,6 +307,115 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
   }, true);
 })();
 
+// --- Model Sidebar Actions (Delegation) ---
+(function wireModelSidebarActions(){
+  var host = document.getElementById("libSidebarBody");
+  if(!host) return;
+
+  host.addEventListener("click", function(ev){
+    var t = ev.target;
+    if(!t) return;
+
+    // ⋯ Menü togglen
+    var kebab = t.closest(".menu-toggle");
+    if (kebab){
+      ev.stopPropagation();
+      closeAllMenus();
+      var menu = kebab.closest(".menu");
+      if(menu) menu.classList.toggle("open");
+      return;
+    }
+
+    // Plus → einfügen
+    if (t.dataset && t.dataset.role === "lib-spawn"){
+      var id = t.dataset.id || "";
+      spawnModelFromLibById(id);
+      closeAllMenus();
+      return;
+    }
+
+    // Bearbeiten
+    if (t.dataset && t.dataset.role === "lib-edit"){
+      closeAllMenus();
+    // existiert schon eine edit-Funktion in der Library? → nutzen
+    if (window.DA_LIB && typeof DA_LIB.openEditModal === "function") {
+      window.closeAllMenus();
+      DA_LIB.openEditModal(t.dataset.id);
+      return;
+    }
+    // Legacy-Global (falls vorhanden)
+    if (typeof window.openLibEditModal === "function") {
+      window.closeAllMenus();
+      window.openLibEditModal(t.dataset.id);
+      return;
+    }
+    // Fallback: einfacher Öffner
+    tryOpenLibEditModalFallback(t.dataset.id); // siehe Hilfsfunktion unten
+    return;
+    }
+
+    // Löschen
+    if (t.dataset && t.dataset.role === "lib-delete"){
+      window.closeAllMenus();
+
+      var id = t.dataset.id || "";
+
+      // 1) bevorzugt offizielle API der Library
+      if (window.DA_LIB && typeof DA_LIB.removeById === "function"){
+        DA_LIB.removeById(id);
+      } else {
+        // 2) robuster Fallback: Liste holen → Eintrag löschen → speichern
+        var list = [];
+        try {
+          if (window.getModelLibListOrThrow) {
+            list = getModelLibListOrThrow();
+          } else if (window.DA_LIB && typeof DA_LIB.listModels === "function") {
+            list = DA_LIB.listModels();
+          } else if (window.DA_LIB && typeof DA_LIB.load === "function") {
+            list = DA_LIB.load();
+          }
+        } catch(_){}
+
+        var idx = list.findIndex(function(x){ return String(x.id) === String(id); });
+        if (idx >= 0) list.splice(idx, 1);
+
+        // Speichern: mehrere mögliche API-Namen abdecken
+        try {
+          if (window.DA_LIB && typeof DA_LIB.saveModels === "function") {
+            DA_LIB.saveModels(list);
+          } else if (window.DA_LIB && typeof DA_LIB.save === "function") {
+            DA_LIB.save(list);
+          }
+        } catch(_){}
+      }
+
+      // 3) Sidebar neu rendern (unterstützt beide Render-APIs)
+      try {
+        if (window.DA_LIB && typeof DA_LIB.renderSidebarInto === "function") {
+          DA_LIB.renderSidebarInto("#libSidebarBody");
+        } else if (window.DA_LIB && typeof DA_LIB.renderSidebar === "function") {
+          DA_LIB.renderSidebar("#libSidebarBody");
+        }
+      } catch(_){}
+
+      return;
+    }
+  });
+
+  // Dragstart (setzt Custom-Type + Text-Fallback)
+  host.addEventListener("dragstart", function(ev){
+    var item = ev.target.closest('[data-role="lib-item"]');
+    if(!item) return;
+    var id = item.getAttribute("data-id") || "";
+    try{
+      ev.dataTransfer.setData("application/x-da-modellib-id", id);
+      ev.dataTransfer.setData("text/plain", "MODLIB:" + id);
+      ev.dataTransfer.effectAllowed = "copy";
+    }catch(_){}
+  }, true);
+})();
+
+
 // Prüft, ob dieses Device (aus der Dev-Lib) im aktuellen Preset bereits existiert.
 // Kriterium: gleicher Name ODER gleiche MAC ODER gleiche Seriennummer.
 function deviceExistsInPreset(doc, devEntry){
@@ -296,7 +441,7 @@ function deviceExistsInPreset(doc, devEntry){
 }
 
 function spawnDeviceFromDevLibById(devId){
-  if(!window.lastXmlDoc){ alert("Kein Preset geladen."); return; }
+  var doc = ensurePresetDoc();
   var list = (window.DA_DEVLIB && window.DA_DEVLIB.load()) || [];
   var d = list.find(x => String(x.id) === String(devId));
   if(!d){ alert("Device nicht gefunden."); return; }
@@ -340,6 +485,56 @@ function spawnDeviceFromDevLibById(devId){
   var xml = new XMLSerializer().serializeToString(doc);
   try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_){}
   if (typeof fillPresetTable === "function") fillPresetTable(doc);
+  try { window.DA_DEVLIB.renderSidebarList("#devSidebarBody", window.lastXmlDoc); } catch(_){}
+
+}
+
+function spawnModelFromLibById(modelId){
+  var doc = ensurePresetDoc();
+
+  var list;
+  try { list = getModelLibListOrThrow(); }
+  catch(e){ alert(e.message || "Model-Library fehlt."); return; }
+
+  var m = list.find(function(x){ return String(x.id)===String(modelId); });
+  if(!m){ alert("Modell nicht gefunden."); return; }
+
+  // Name-Pattern aus Lib/Model ermitteln
+  var pattern = "";
+  try {
+    if (typeof DA_LIB.getNamePattern === "function") pattern = DA_LIB.getNamePattern(modelId) || "";
+  } catch(_){}
+  if (!pattern) {
+    pattern =
+      (m.device_defaults && m.device_defaults.name_pattern) ||
+      m.name_pattern ||
+      (m.naming && m.naming.pattern) ||
+      m.pattern ||
+      "Device-[n]";
+  }
+
+  // Eindeutigen Gerätenamen erzeugen
+  var deviceName = (typeof window.generateUniqueNameFromPattern === "function")
+    ? window.generateUniqueNameFromPattern(pattern, lastXmlDoc, null)
+    : (pattern.replace(/\[(?:n|N)\]/g,"1") || "Device-1");
+
+  // Device-XML über Lib erzeugen
+  if (!window.DA_LIB || typeof DA_LIB.makeDeviceXml !== "function"){
+    alert("Library-Modul (makeDeviceXml) fehlt.");
+    return;
+  }
+  var xmlStr = DA_LIB.makeDeviceXml(modelId, { name: deviceName });
+
+  // In Preset übernehmen
+  var frag = parseXml(xmlStr);
+  var devEl = frag.documentElement; // <device>
+  var imported = lastXmlDoc.importNode ? lastXmlDoc.importNode(devEl, true) : devEl;
+  var root = lastXmlDoc.querySelector("preset") || lastXmlDoc.documentElement;
+  root.appendChild(imported);
+
+  // Persist & UI
+  writePresetToSession(new XMLSerializer().serializeToString(lastXmlDoc));
+  fillPresetTable(lastXmlDoc);
 }
 
 (function setupDevEditModal(){
@@ -589,10 +784,11 @@ function readFromSession(){
       try{
         var t = String(ev.target.result || "");
         var doc = parseXml(t);
-        lastXmlDoc = doc;
-        fillPresetTable(lastXmlDoc);
-        var xml = new XMLSerializer().serializeToString(lastXmlDoc);
-        writePresetToSession(xml);
+          lastXmlDoc = doc;
+          fillPresetTable(lastXmlDoc);
+          try { window.DA_DEVLIB.renderSidebarList("#devSidebarBody", lastXmlDoc); } catch(_){}
+          var xml = new XMLSerializer().serializeToString(lastXmlDoc);
+          writePresetToSession(xml);
       }catch(err){ alert(err.message || String(err)); }
     };
     reader.readAsText(f);
@@ -1476,7 +1672,7 @@ if (renameChecked) {
     inpFull.value = ctx.oldFull;
     inpSuffix.value = parts.suffix || "";
     updatePreview();
-    modal.style.display = "";
+    modal.style.display = "flex";
   }
 
   function close(){
@@ -1618,95 +1814,33 @@ document.addEventListener("visibilitychange", function() {
    - Drop auf #presetTable fügt Device ins Preset ein
    - Name über Name-Pattern + eindeutiger [n]-Zähler
    ============================================================ */
-(function enablePresetTableDrop(){
+
+   // --- Model-Library → Drop auf Preset-Tabelle ---
+(function bindModelLibDropZone(){
   var table = document.getElementById("presetTable");
   if(!table) return;
 
-  function ensureDoc(){
-    if (lastXmlDoc) return lastXmlDoc;
-    var s = readFromSession(); if(s){ try{ lastXmlDoc = parseXml(s); }catch(_){ lastXmlDoc=null; } }
-    if(!lastXmlDoc){ lastXmlDoc = parseXml("<preset/>"); }
-    return lastXmlDoc;
-  }
-
-
-  function addDeviceFromModelId(modelId){
-    if(!window.DA_LIB || !window.DA_LIB.makeDeviceXml){ alert("Library-Modul fehlt."); return; }
-    var doc = ensureDoc();
-
-modelId = (modelId || '').trim();
-
-    // Primär über Lib-API
-    var pattern = (window.DA_LIB && typeof window.DA_LIB.getNamePattern === 'function')
-      ? window.DA_LIB.getNamePattern(modelId)
-      : '';
-
-    // Fallback: direkt im Modell suchen (ältere Lib-Stände)
-    if (!pattern && window.DA_LIB && typeof window.DA_LIB.listModels === 'function') {
-      try {
-        var models = window.DA_LIB.listModels() || [];
-        var m = models.find(x => String(x.id) === modelId || String(x._drag_id||'') === modelId);
-        if (m) {
-          pattern =
-            (m.device_defaults && m.device_defaults.name_pattern) ||
-            m.name_pattern ||
-            (m.naming && m.naming.pattern) ||
-            m.pattern || '';
-        }
-      } catch(_) {}
-    }
-
-    if (!pattern) {
-      console.warn('[Architect] Kein Name-Pattern in Lib gefunden – Fallback auf "Device-[n]". modelId=', modelId);
-      pattern = 'Device-[n]';
-    } else {
-      console.debug('[Architect] Name-Pattern aus Lib:', pattern, 'modelId=', modelId);
-    }    var deviceName = window.generateUniqueNameFromPattern(pattern, doc, /*excludeName*/ null);
-
-
-    
-    // Device-XML erzeugen
-    var devXmlStr = window.DA_LIB.makeDeviceXml(modelId, { name: deviceName });
-
-    // in Preset-Dokument übernehmen
-    var frag = parseXml(devXmlStr);
-    var devEl = frag.documentElement;
-    var imported = doc.importNode ? doc.importNode(devEl, true) : devEl;
-    var pres = doc.querySelector("preset") || doc.documentElement;
-    pres.appendChild(imported);
-
-    // speichern & UI aktualisieren
-    lastXmlDoc = doc;
-    writePresetToSession(new XMLSerializer().serializeToString(lastXmlDoc));
-    fillPresetTable(lastXmlDoc);
-  }
-
-// --- Device-Library → Drop auf Preset-Tabelle (mit Duplikat-Check) ---
-(function bindDevLibDropZone(){
-  var table = document.getElementById("presetTable");
-  if(!table) return;
-
-  function isDevDrag(ev){
+  function isModelDrag(ev){
     try{
       var types = ev.dataTransfer && ev.dataTransfer.types ? Array.from(ev.dataTransfer.types) : [];
-      return types.includes("application/x-da-devlib-id") || types.includes("text/plain");
+      return types.includes("application/x-da-modellib-id") || types.includes("text/plain");
     }catch(_){}
     return false;
   }
-  function getDevIdFromDT(ev){
+  function getModelIdFromDT(ev){
     var id = "";
-    try { id = ev.dataTransfer.getData("application/x-da-devlib-id") || ""; } catch(_){}
+    try { id = ev.dataTransfer.getData("application/x-da-modellib-id") || ""; } catch(_){}
     if(!id){
       try {
         var t = ev.dataTransfer.getData("text/plain") || "";
-        if (t.indexOf("DEVLIB:") === 0) id = t.slice(7);
+        if (t.indexOf("MODLIB:") === 0) id = t.slice(7);
       } catch(_){}
     }
     return id;
   }
 
   table.addEventListener("dragover", function(ev){
-    if (isDevDrag(ev)){
+    if (isModelDrag(ev)){
       ev.preventDefault();
       table.classList.add("drop-target");
       try { ev.dataTransfer.dropEffect = "copy"; } catch(_){}
@@ -1717,42 +1851,13 @@ modelId = (modelId || '').trim();
   });
   table.addEventListener("drop", function(ev){
     table.classList.remove("drop-target");
-    var id = getDevIdFromDT(ev);
+    var id = getModelIdFromDT(ev);
     if(!id) return;
     ev.preventDefault();
-
-    // Vorab: Eintrag finden & Duplikate prüfen
-    var entry = ((window.DA_DEVLIB && window.DA_DEVLIB.load()) || []).find(function(x){ return String(x.id)===String(id); });
-    if(!entry) return;
-
-    if (deviceExistsInPreset(window.lastXmlDoc, entry)){
-      alert("Dieses Device ist im Preset bereits vorhanden.");
-      return;
-    }
-    // zentraler Insert (enthält ebenfalls den Check als Netz & doppelten Boden)
-    spawnDeviceFromDevLibById(id);
+    spawnModelFromLibById(id);
   });
 })();
 
-
-  table.addEventListener("dragover", function(e){
-    if(!e.dataTransfer) return;
-    if(e.dataTransfer.types && e.dataTransfer.types.indexOf("text/plain")>=0){
-      e.preventDefault();
-      table.classList.add("drop-hover");
-      e.dataTransfer.dropEffect = "copy";
-    }
-  });
-  table.addEventListener("dragleave", function(){ table.classList.remove("drop-hover"); });
-  table.addEventListener("drop", function(e){
-    e.preventDefault();
-    table.classList.remove("drop-hover");
-    try {
-      var modelId = e.dataTransfer.getData("text/plain");
-      if(modelId) addDeviceFromModelId(modelId);
-    } catch(_) {}
-  });
-})();
 
 // Nach Zurück-Navigation (BFCache/pageshow) Preset-Tabelle neu aufbauen
 (function restorePresetOnPageShow(){
@@ -1769,3 +1874,28 @@ modelId = (modelId || '').trim();
     }catch(_){}
   });
 })();
+
+// Delegation für Kebab-Menüs in beiden Sidebars (Model- und Device-Lib)
+(function wireLibMenus(){
+  ["#libSidebarBody", "#devSidebarBody"].forEach(function(sel){
+    var host = document.querySelector(sel);
+    if(!host) return;
+    host.addEventListener("click", function(ev){
+      var btn = ev.target.closest(".menu-toggle");
+      if(!btn) return;
+      ev.stopPropagation();
+      closeAllMenus && closeAllMenus();
+      var menu = btn.closest(".menu");
+      if(menu) menu.classList.toggle("open");
+    });
+  });
+})();
+
+/* === PATCH 1: universelles Menü-Schließen (falls noch nicht vorhanden) === */
+if (typeof window.closeAllMenus !== "function"){
+  window.closeAllMenus = function(){
+    document.querySelectorAll(".menu.open").forEach(m => m.classList.remove("open"));
+  };
+}
+document.addEventListener("click", function(){ window.closeAllMenus(); });
+

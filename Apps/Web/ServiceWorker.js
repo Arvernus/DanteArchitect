@@ -1,7 +1,7 @@
 self.addEventListener("install", e=>self.skipWaiting());
 self.addEventListener("activate", e=>self.clients.claim());
 
-const CACHE_VERSION = 'V0.0.2';
+const CACHE_VERSION = 'V0.0.4';
 
 // Während der Entwicklung: für JS-Dateien Netzwerk bevorzugen (hält Breakpoints aktuell)
 self.addEventListener('fetch', (event) => {

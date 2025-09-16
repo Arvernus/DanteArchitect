@@ -158,3 +158,30 @@ body.with-right-sidebar .main{ margin-right:320px; }
 
 /* DnD Ziel in der Preset-Tabelle hervorheben */
 .table.drop-target { outline: 2px dashed #82b1ff; outline-offset: 2px; }
+
+/* kleines Plus für Einfügen */
+.btn.btn-plus {
+  padding: 0 8px;
+  line-height: 20px;
+  min-height: 22px;
+  font-weight: 600;
+}
+
+/* dreipunkt-menü in bibliothekseinträgen */
+.lib-item .menu { position: relative; display: inline-block; }
+.lib-item .menu .menu-toggle { padding: 0 8px; min-height: 22px; line-height: 20px; }
+.lib-item .menu .menu-list {
+  position: absolute; right: 0; top: 100%;
+  background: #fff; border: 1px solid #ddd; border-radius: 8px;
+  padding: 6px; display: none; min-width: 140px; z-index: 10;
+  box-shadow: 0 6px 24px rgba(0,0,0,.08);
+}
+.lib-item .menu.open .menu-list { display: block; }
+.lib-item .menu .menu-item { display: block; width: 100%; text-align: left; }
+
+/* Ausgrauen von bereits im Preset vorhandenen Devices */
+.lib-item.is-present {
+  opacity: .45; pointer-events: none;
+}
+.lib-item.is-present .badge { opacity: 1; } /* falls du Badges verwendest */
+

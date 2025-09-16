@@ -735,55 +735,68 @@ btn.onclick = function () {
   }
 
   // ===== Sidebar =====
-  function renderSidebarInto(container) {
-    const list = load();
-    container.innerHTML = "";
-    if (!list.length) {
-      container.innerHTML = "<div class='muted'>Keine Modelle in der Bibliothek.</div>";
-      return;
-    }
-    list
-      .slice()
-      .sort((a, b) =>
-        ((a.manufacturer_name || "") + a.model_name).localeCompare(
-          (b.manufacturer_name || "") + b.model_name
-        )
-      )
-      .forEach((m) => {
-        const row = document.createElement("div");
-        row.className = "lib-item";
-        row.style.display = "flex";
-        row.style.alignItems = "center";
-        row.style.justifyContent = "space-between";
-        row.style.gap = "8px";
+function renderSidebarInto(container) {
+  const list = load();
+  const el = (typeof container === "string") ? document.querySelector(container) : container;
+  if (!el) return;
 
-        // Drag & Drop aktivieren (Row ist die "Karte" in der Sidebar)
-        row.draggable = true;
-        row.addEventListener("dragstart", function(ev){
-          try{
-            ev.dataTransfer.setData("text/plain", String(m.id));
-            ev.dataTransfer.effectAllowed = "copy";
-          }catch(_){}
-        });
-
-        const text = document.createElement("div");
-        const vh = m.manufacturer_name ? m.manufacturer_name + " / " : "";
-        text.textContent = `${vh}${m.model_name} (${m.txCount}×${m.rxCount})`;
-
-        const actions = document.createElement("div");
-        const btnEdit = document.createElement("button");
-        btnEdit.className = "btn";
-        btnEdit.textContent = "Bearbeiten";
-        btnEdit.onclick = function () {
-          openEditModal(m.id);
-        };
-        actions.appendChild(btnEdit);
-
-        row.appendChild(text);
-        row.appendChild(actions);
-        container.appendChild(row);
-      });
+  el.innerHTML = "";
+  if (!list.length) {
+    el.innerHTML = "<div class='muted'>Keine Modelle in der Bibliothek.</div>";
+    return;
   }
+
+  // sortiert wie zuvor (Vendor+Model)
+  const sorted = list.slice().sort((a, b) =>
+    ((a.manufacturer_name || "") + a.model_name).localeCompare(
+      (b.manufacturer_name || "") + b.model_name
+    )
+  );
+
+  const esc = (s) => String(s || "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+
+  // HTML mit Plus-Button und 3-Punkte-Menü
+  const html = sorted.map(m => {
+    return (
+      `<div class="lib-item" draggable="true" data-role="lib-item" data-id="${m.id}">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+          <div>
+            <strong>${esc(m.manufacturer_name)} — ${esc(m.model_name)}</strong>
+            <div class="muted" style="font-size:12px; margin-top:2px;">
+              ${m.txCount|0}×${m.rxCount|0}
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <button class="btn btn-plus" data-role="lib-spawn" data-id="${m.id}" title="Einfügen">+</button>
+            <div class="menu">
+              <button class="btn menu-toggle" type="button" title="Mehr">⋯</button>
+              <div class="menu-list">
+                <button class="menu-item" data-role="lib-edit"  data-id="${m.id}">Bearbeiten</button>
+                <button class="menu-item" data-role="lib-delete" data-id="${m.id}">Löschen</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`
+    );
+  }).join("");
+
+  el.innerHTML = html;
+
+  // Drag & Drop für jedes Item aktivieren (mit Fallback-Type)
+  el.querySelectorAll(".lib-item[draggable]").forEach(row => {
+    row.addEventListener("dragstart", function(ev){
+      const id = row.getAttribute("data-id") || "";
+      try{
+        ev.dataTransfer.setData("application/x-da-modellib-id", id);
+        ev.dataTransfer.setData("text/plain", "MODLIB:" + id); // Fallback
+        ev.dataTransfer.effectAllowed = "copy";
+      }catch(_){}
+    });
+  });
+}
 
   let sidebarPending = false;
   function requestRenderSidebar() {
@@ -1067,31 +1080,69 @@ window.DA_DEVLIB = (function(){
   }
 
   // einfache Render-Helfer (Liste → HTML)
-function toListItem(d){
+function toListItem(d, present){
   const p = splitName(d.name);
   const title = p.suffix ? (p.prefix + "-") : p.prefix;
   const sub   = p.suffix || "";
-  // draggable + data-* für DnD und Buttons
+  const presentCls = present ? " is-present" : "";
+
   return (
-    `<div class="lib-item" draggable="true" data-role="devlib-item" data-id="${d.id}">
-      <div><strong>${escapeHtml(title)}</strong>${sub?("<br><span class='muted'>"+escapeHtml(sub)+"</span>"):""}</div>
-      <div class="muted" style="font-size:12px;">${escapeHtml(d.manufacturer_name)} — ${escapeHtml(d.model_name)} · ${d.txchannels.length}×${d.rxchannels.length}</div>
-      <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
-        <button class="btn" data-role="devlib-spawn" data-id="${d.id}">Einfügen</button>
-        <button class="btn" data-role="devlib-edit"  data-id="${d.id}">Bearbeiten</button>
-        <button class="btn" data-role="devlib-delete" data-id="${d.id}" style="border-color:#d93025; color:#d93025;">Löschen</button>
+    `<div class="lib-item${presentCls}" draggable="true" data-role="devlib-item" data-id="${d.id}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+        <div>
+          <strong>${escapeHtml(title)}</strong>${sub?("<br><span class='muted'>"+escapeHtml(sub)+"</span>"):""}
+          <div class="muted" style="font-size:12px; margin-top:2px;">
+            ${escapeHtml(d.manufacturer_name)} — ${escapeHtml(d.model_name)} · ${d.txchannels.length}×${d.rxchannels.length}
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="btn btn-plus" data-role="devlib-spawn" data-id="${d.id}" title="Einfügen">+</button>
+          <div class="menu">
+            <button class="btn menu-toggle" type="button" title="Mehr">⋯</button>
+            <div class="menu-list">
+              <button class="menu-item" data-role="devlib-edit"  data-id="${d.id}">Bearbeiten</button>
+              <button class="menu-item" data-role="devlib-delete" data-id="${d.id}">Löschen</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>`
   );
 }
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-  function renderSidebarList(container){
-    const el = (typeof container==="string") ? document.querySelector(container) : container;
-    if(!el) return;
-    const list = load();
-    el.innerHTML = list.map(toListItem).join("") || "<div class='muted'>Noch keine Geräte in der Bibliothek.</div>";
+function renderSidebarList(container, xmlDoc){
+  const el = (typeof container==="string") ? document.querySelector(container) : container;
+  if(!el) return;
+  const list = load();
+
+  // Hilfsfunktion: prüft, ob Device bereits im Preset vorhanden ist (Name/MAC/Serial)
+  function existsIn(doc, dev){
+    try{
+      if(!doc) return false;
+      const root = doc.querySelector("preset") || doc;
+      const devs = Array.prototype.slice.call(root.getElementsByTagName("device"));
+      const pick = (node, sel) => {
+        const n = node.querySelector(sel);
+        return n && n.textContent ? n.textContent.trim() : "";
+      };
+      for(let i=0;i<devs.length;i++){
+        const de = devs[i];
+        const n = pick(de,"name");
+        const m = pick(de,"mac");
+        const s = pick(de,"serial");
+        if (n && dev.name && n === dev.name) return true;
+        if (m && dev.mac  && m === dev.mac)  return true;
+        if (s && dev.serial && s === dev.serial) return true;
+      }
+    }catch(_){}
+    return false;
   }
+
+  el.innerHTML = list.length
+    ? list.map(d => toListItem(d, existsIn(xmlDoc, d))).join("")
+    : "<div class='muted'>Noch keine Geräte in der Bibliothek.</div>";
+}
 
   // Public
   return {
