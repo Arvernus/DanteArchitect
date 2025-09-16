@@ -1,4 +1,8 @@
-// Apps/Web/Matrix.js
+// Apps/Web/Matrix.js  — bereinigte Version mit:
+// - stabilem Render (TX- & RX-Kanalüberschriften korrekt)
+// - Namenskonzept (Prefix/Suffix Anzeige & Edit nur Suffix, wenn aktiv)
+// - Drag-to-Subscribe („Malen“) mit add/erase
+// - Einzelklick-Subscribe bleibt erhalten
 
 // --------- Konstanten ----------
 var SKEY_XML  = "DA_PRESET_XML";
@@ -18,51 +22,55 @@ var collapsedRx = Object.create(null);
 var frozenCols = null;
 var frozenRows = null;
 
+// --- Painting (Drag-to-Subscribe) ---
+var isPainting = false;      // aktiv beim gedrückten Ziehen
+var paintMode = null;        // "add" | "erase"
+var paintVisitedRows = null; // Set von "rdi:rid" -> pro RX nur 1x anwenden
+
 // --------- Helpers ----------
-
-// --- Namenskonzept Helpers ---
-var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
-function nameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_){ return false; } }
-function splitName(full){
-  var s = String(full || "").trim();
-  if (!s) return { prefix: "", suffix: "" };
-
-  // Kandidaten: alle Vorkommen von "-<Ziffern>"
-  // Wir wählen das rechteste, hinter dem im restlichen String noch "-<Buchstabe>" vorkommt.
-  var idxCandidate = -1;
-  var re = /-(\d+)/g, m;
-  while ((m = re.exec(s))) {
-    var afterNumIdx = re.lastIndex;        // Position direkt NACH den Ziffern
-    var rest = s.slice(afterNumIdx);       // Rest danach
-    if (/-[A-Za-z]/.test(rest)) {          // nur Kandidaten akzeptieren, wenn später ein "-<Buchstabe>" folgt
-      idxCandidate = afterNumIdx;
-    }
-  }
-
-  if (idxCandidate !== -1) {
-    // Erwartet: direkt danach kommt ein '-' als Trenner zum Suffix
-    if (s.charAt(idxCandidate) === '-') {
-      return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate + 1) };
-    }
-    // Falls kein '-' folgt (unerwartet): Fallback auf einfachen Split
-  }
-
-  // Kein valider [n]-Anker mit folgendem Suffix → Fallback: letzter Bindestrich trennt
-  var idx = s.lastIndexOf("-");
-  if (idx < 0) return { prefix: s, suffix: "" };
-  return { prefix: s.slice(0, idx), suffix: s.slice(idx + 1) };
-}
-function joinName(prefix, suffix){
-  prefix = String(prefix||""); suffix = String(suffix||"");
-  return suffix ? (prefix + "-" + suffix) : prefix;
-}
-
-
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
 function norm(s){ return (s||"").toLowerCase(); }
 function colKey(devIndex, chanId){ return chanId ? ("tx:"+devIndex+":"+chanId) : ("txdev:"+devIndex); }
 function rowKey(devIndex, chanId){ return chanId ? ("rx:"+devIndex+":"+chanId) : ("rxdev:"+devIndex); }
+
+// === Namenskonzept (global; geteilter Key mit Index/Script.js) ===
+var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
+function nameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_){ return false; } }
+
+// [n]-sicheres Splitten: wir suchen ein rechtes "-<Zahl>" (=Zähler), dem später irgendwo "-<Buchstabe>" folgt.
+// Alles danach ist Suffix (kann Bindestriche enthalten). Sonst Fallback letzter Bindestrich.
+function splitName(full){
+  var s = String(full || "").trim();
+  if (!s) return { prefix: "", suffix: "" };
+
+  var idxCandidate = -1;
+  var re = /-(\d+)/g, m;
+  while ((m = re.exec(s))) {
+    var afterNumIdx = re.lastIndex; // Position nach den Ziffern
+    var rest = s.slice(afterNumIdx);
+    if (/-[A-Za-z]/.test(rest)) {
+      idxCandidate = afterNumIdx;
+    }
+  }
+  if (idxCandidate !== -1 && s.charAt(idxCandidate) === '-') {
+    return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate + 1) };
+  }
+
+  // Alternative: einfaches Muster "…-[Zahl](-Suffix optional)"
+  var m2 = s.match(/^(.*-\d+)(?:-(.+))?$/);
+  if (m2) return { prefix: m2[1], suffix: m2[2] ? m2[2] : "" };
+
+  // Fallback: letzter Bindestrich
+  var idx = s.lastIndexOf("-");
+  if (idx < 0) return { prefix: s, suffix: "" };
+  return { prefix: s.slice(0, idx), suffix: s.slice(idx + 1) };
+}
+function joinName(prefix, suffix){
+  prefix = String(prefix || ""); 
+  suffix = String(suffix || "");
+  return suffix ? (prefix + "-" + suffix) : prefix;
+}
 
 function readFromSession(){
   var xml = null; try { xml = sessionStorage.getItem(SKEY_XML); } catch(_) {}
@@ -236,6 +244,38 @@ function freezeVisible(base){
   } else { frozenRows = null; }
 }
 
+// --- Painting-Helpers: raw subscribe/clear ohne sofortiges Re-Render ---
+function setRxSubscriptionRaw(rdi, rid, tdi, tid){
+  if(isNaN(rdi) || isNaN(tdi)) return;
+  var rdev = devices[rdi], tdev = devices[tdi];
+  if(!rdev || !tdev) return;
+
+  var rx = null, tx = null, i;
+  for(i=0;i<rdev.rx.length;i++){ if(String(rdev.rx[i].id) === String(rid)) { rx = rdev.rx[i]; break; } }
+  for(i=0;i<tdev.tx.length;i++){ if(String(tdev.tx[i].id) === String(tid)) { tx = tdev.tx[i]; break; } }
+  if(!rx || !tx) return;
+
+  var sd = rx.el.querySelector("subscribed_device");
+  var sc = rx.el.querySelector("subscribed_channel");
+  if(!sd){ sd = xmlDoc.createElement("subscribed_device"); rx.el.appendChild(sd); }
+  if(!sc){ sc = xmlDoc.createElement("subscribed_channel"); rx.el.appendChild(sc); }
+  sd.textContent = tdev.name; sc.textContent = tx.label;
+  rx.subDev = tdev.name; rx.subChan = tx.label;
+}
+function clearRxSubscriptionRaw(rdi, rid){
+  if(isNaN(rdi)) return;
+  var rdev = devices[rdi]; if(!rdev) return;
+  var rx = null, i;
+  for(i=0;i<rdev.rx.length;i++){ if(String(rdev.rx[i].id) === String(rid)) { rx = rdev.rx[i]; break; } }
+  if(!rx) return;
+
+  var sd = rx.el.querySelector("subscribed_device");
+  var sc = rx.el.querySelector("subscribed_channel");
+  if(sd) sd.textContent = "";
+  if(sc) sc.textContent = "";
+  rx.subDev = ""; rx.subChan = "";
+}
+
 // --------- Render ----------
 function renderMatrix(){
   var thead = $("#thead"), tbody = $("#tbody");
@@ -247,18 +287,10 @@ function renderMatrix(){
   var visCols = base.visCols.slice();
   var visRows = base.visRows.slice();
 
-  if (frozenCols){
-    visCols = visCols.filter(function(c){
-      return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id)));
-    });
-  }
-  if (frozenRows){
-    visRows = visRows.filter(function(r){
-      return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id)));
-    });
-  }
+  if(frozenCols){ visCols = visCols.filter(function(c){ return frozenCols.has(colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id))); }); }
+  if(frozenRows){ visRows = visRows.filter(function(r){ return frozenRows.has(rowKey(r.devIndex, r.isDevice ? null : (r.rx && r.rx.id))); }); }
 
-  // ----- Kopfzeile bauen -----
+  // ----- Kopfzeile 1 (TX-Gerätegruppen) -----
   var tr0 = cel("tr");
   var thRXDev = cel("th","top-left-0","RX Gerät"); thRXDev.style.minWidth="220px";
   var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
@@ -267,19 +299,18 @@ function renderMatrix(){
 
   // TX-Spalten nach Geräten gruppieren
   var groupRuns = [], run = null;
-  for (var cidx=0; cidx<visCols.length; cidx++){
+  for(var cidx=0;cidx<visCols.length;cidx++){
     var c = visCols[cidx];
     var dIdx = c.devIndex;
-    if (!run || run.devIndex !== dIdx){
+    if(!run || run.devIndex !== dIdx){
       run = { name: c.dev.name, dev: c.dev, devIndex: dIdx, cols: [], count: 0 };
       groupRuns.push(run);
     }
-    run.cols.push(c); 
-    run.count++;
+    run.cols.push(c); run.count++;
   }
 
   // TX-Gruppen-Header rendern
-  for (var g=0; g<groupRuns.length; g++){
+  for(var g=0; g<groupRuns.length; g++){
     var grp = groupRuns[g];
     var th = cel("th","group"); 
     th.colSpan = grp.count; 
@@ -290,6 +321,7 @@ function renderMatrix(){
     toggle.dataset.devIndex = String(grp.devIndex); 
     toggle.style.marginRight = "6px";
 
+    // Namensanzeige: zweizeilig Prefix/Suffix wenn aktiv, sonst einzeilig
     var partsTX = splitName(grp.name || "");
     var stackTX = cel("span","name-stack","");
     var topTX = cel("span","name-prefix", partsTX.prefix || "");
@@ -297,6 +329,7 @@ function renderMatrix(){
 
     if (editNamesEnabled){
       if (nameConceptEnabled()){
+        // Nur Suffix editierbar
         botTX.dataset.role = "dev-suffix-tx";
         botTX.dataset.devIndex = String(grp.devIndex);
         botTX.contentEditable = "true";
@@ -306,10 +339,9 @@ function renderMatrix(){
         botTX.dataset.role = "dev-name-tx";
         botTX.dataset.devIndex = String(grp.devIndex);
         botTX.contentEditable = "true";
-        topTX.textContent = ""; // keine zweizeilige Darstellung nötig
+        topTX.textContent = ""; // keine Zweizeile
       }
     } else {
-      // Anzeige ohne Edit
       if (!nameConceptEnabled()){
         botTX.textContent = grp.name || "(ohne Name)";
         topTX.textContent = "";
@@ -322,40 +354,32 @@ function renderMatrix(){
     th.appendChild(stackTX);
     tr0.appendChild(th);
   }
-
-  // WICHTIG: Kopfzeile an <thead> anhängen
   thead.appendChild(tr0);
 
-  // Zweite Kopfzeile: TX-Kanalnamen
+  // ----- Kopfzeile 2 (TX-Kanäle) -----
   var tr1 = cel("tr");
-
-  // Platzhalter für RX-Gerät und RX-Kanal-Spalten
-  tr1.appendChild(cel("th","rowhead",""));
-  tr1.appendChild(cel("th","rowchan",""));
-
-  // Für jede sichtbare TX-Spalte die Kanal-Headerzelle setzen
-  for (var i = 0; i < visCols.length; i++) {
+  tr1.appendChild(cel("th","rowhead","")); // unter RX Gerät
+  tr1.appendChild(cel("th","rowchan","")); // unter RX Kanal
+  for(var i=0;i<visCols.length;i++){
     var cc = visCols[i];
-    var thChan = cel("th","tx-chan","");
+    var thc = cel("th","tx-chan");
     if (cc.isDevice) {
-      thChan.style.background = "#f7f7f7";
-      thChan.textContent = "";
+      thc.style.background = "#f7f7f7";
+      thc.textContent = "";
     } else {
       var spc = cel("span","editable", cc.tx.label || "");
       spc.dataset.role = "tx-chan";
       spc.dataset.devIndex = String(cc.devIndex);
       spc.dataset.chanId   = String(cc.tx.id);
-      if (editNamesEnabled) { spc.contentEditable = "true"; }
-      thChan.appendChild(spc);
+      if(editNamesEnabled){ spc.contentEditable = "true"; }
+      thc.appendChild(spc);
     }
-    tr1.appendChild(thChan);
+    tr1.appendChild(thc);
   }
-
   thead.appendChild(tr1);
 
-
-  // ----- Tabellenkörper bauen -----
-  for (var r=0; r<visRows.length; r++){
+  // ----- Tabellenkörper -----
+  for(var r=0; r<visRows.length; r++){
     var row = visRows[r];
     var tr = cel("tr");
 
@@ -366,6 +390,7 @@ function renderMatrix(){
     toggleRx.dataset.devIndex = String(row.devIndex); 
     toggleRx.style.marginRight = "6px";
 
+    // RX-Gerätename (Prefix/Suffix)
     var partsRX = splitName(row.dev.name || "");
     var stackRX = cel("span","name-stack","");
     var topRX = cel("span","name-prefix", partsRX.prefix || "");
@@ -396,83 +421,65 @@ function renderMatrix(){
     thD.appendChild(stackRX);
     tr.appendChild(thD);
 
-    // Zweite Kopfspalte: RX-Kanalname (oder leer bei Gerätezeile)
-    var thC = cel("th","rowchan","");
-    if (row.isDevice) {
-      thC.style.background = "#f7f7f7";
-      thC.textContent = "";
+    // RX-Kanalspalte
+    var thC = cel("th","rowchan");
+    if (row.isDevice) { 
+      thC.style.background = "#f7f7f7"; 
+      thC.textContent = ""; 
     } else {
       var cspan = cel("span","editable", row.rx.name || "");
-      cspan.dataset.role = "rx-chan";
-      cspan.dataset.devIndex = String(row.devIndex);
+      cspan.dataset.role = "rx-chan"; 
+      cspan.dataset.devIndex = String(row.devIndex); 
       cspan.dataset.chanId   = String(row.rx.id);
-      if (editNamesEnabled) { cspan.contentEditable = "true"; }
+      if(editNamesEnabled){ cspan.contentEditable = "true"; }
       thC.appendChild(cspan);
     }
     tr.appendChild(thC);
 
-
     // Zellen
-    for (var x=0; x<visCols.length; x++){
+    for(var x=0; x<visCols.length; x++){
       var col = visCols[x];
       var cellEditable = (editSubsEnabled && !row.isDevice && !col.isDevice);
       var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
-
       var isSub = (!row.isDevice && !col.isDevice) &&
                   (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
-      if (isSub){ td.appendChild(cel("span","dot","")); }
-
+      if(isSub){ td.appendChild(cel("span","dot","")); }
       td.dataset.role = "cell";
       td.dataset.rxDevIndex = String(row.devIndex);
       td.dataset.rxChanId   = row.isDevice ? "" : String(row.rx.id);
       td.dataset.txDevIndex = String(col.devIndex);
       td.dataset.txChanId   = col.isDevice ? "" : String(col.tx.id);
-
       tr.appendChild(td);
     }
 
     tbody.appendChild(tr);
   }
 
-  // ----- Delegierte Interaktion -----
+  // ----- Delegierte Interaktion (Klicks) -----
   var theadEl = $("#thead"), tbodyEl = $("#tbody");
   theadEl.onclick = tbodyEl.onclick = function(ev){
-    var t = ev.target; 
-    if(!t || !t.dataset) return;
+    var t = ev.target; if(!t || !t.dataset) return;
 
-    if (t.dataset.role === "toggle-tx"){ 
+    if(t.dataset.role === "toggle-tx"){ 
       var di = parseInt(t.dataset.devIndex,10); 
       collapsedTx[di] = !collapsedTx[di]; 
       renderMatrix(); 
       return; 
     }
-    if (t.dataset.role === "toggle-rx"){ 
-      var di2 = parseInt(t.dataset.devIndex,10); 
+    if(t.dataset.role === "toggle-rx"){ 
+      var di2= parseInt(t.dataset.devIndex,10); 
       collapsedRx[di2] = !collapsedRx[di2]; 
       renderMatrix(); 
       return; 
     }
 
-    if (editNamesEnabled) {
-      // Altes Verhalten (Namenskonzept AUS): kompletter Name editierbar
-      if (t.dataset.role === "dev-name-tx") { 
-        makeEditable(t, function(v){ renameDevice(t, "tx", v); }); 
-        return; 
-      }
-      if (t.dataset.role === "tx-chan") { 
-        makeEditable(t, function(v){ renameTxChannel(t, v); }); 
-        return; 
-      }
-      if (t.dataset.role === "dev-name-rx") { 
-        makeEditable(t, function(v){ renameDevice(t, "rx", v); }); 
-        return; 
-      }
-      if (t.dataset.role === "rx-chan") { 
-        makeEditable(t, function(v){ renameRxChannel(t, v); }); 
-        return; 
-      }
+    if(editNamesEnabled){
+      if(t.dataset.role === "dev-name-tx"){ makeEditable(t, function(v){ renameDevice(t,"tx",v); }); return; }
+      if(t.dataset.role === "tx-chan"){ makeEditable(t, function(v){ renameTxChannel(t,v); }); return; }
+      if(t.dataset.role === "dev-name-rx"){ makeEditable(t, function(v){ renameDevice(t,"rx",v); }); return; }
+      if(t.dataset.role === "rx-chan"){ makeEditable(t, function(v){ renameRxChannel(t,v); }); return; }
 
-      // Neues Verhalten (Namenskonzept AN): nur Suffix editieren
+      // Nur Suffix editieren (Namenskonzept AN)
       if (t.dataset.role === "dev-suffix-tx") {
         makeEditable(t, function(v){
           var di = parseInt(t.dataset.devIndex, 10);
@@ -497,11 +504,87 @@ function renderMatrix(){
       }
     }
 
-    if (editSubsEnabled && t.dataset.role === "cell"){
-      if (!t.dataset.rxChanId || !t.dataset.txChanId) return;
+    if(editSubsEnabled && t.dataset.role === "cell"){
+      if(!t.dataset.rxChanId || !t.dataset.txChanId) return;
       toggleSubscription(t); 
       return;
     }
+  };
+
+  // ----- Drag-to-Subscribe („Malen“) -----
+  var wrapEl = $("#matrixWrap");
+
+  // mousedown: Start Painting
+  tbodyEl.onmousedown = function(ev){
+    if (!editSubsEnabled) return;
+    if (ev.button !== 0) return; // nur linke Maustaste
+    var td = ev.target.closest("td");
+    if (!td || td.dataset.role !== "cell") return;
+    if (!td.dataset.rxChanId || !td.dataset.txChanId) return;
+
+    isPainting = true;
+    paintVisitedRows = new Set();
+
+    var rdi = parseInt(td.dataset.rxDevIndex, 10);
+    var rid = td.dataset.rxChanId;
+    var tdi = parseInt(td.dataset.txDevIndex, 10);
+    var tid = td.dataset.txChanId;
+
+    // Modus bestimmen anhand der Startzelle
+    var rdev = devices[rdi];
+    var rx = (rdev && rdev.rx) ? rdev.rx.find(function(x){ return String(x.id)===String(rid); }) : null;
+    var txObj = (devices[tdi] && devices[tdi].tx) ? devices[tdi].tx.find(function(x){ return String(x.id)===String(tid); }) : null;
+    var already = !!(rx && txObj && rx.subDev === devices[tdi].name && rx.subChan === txObj.label);
+    paintMode = already ? "erase" : "add";
+
+    // Startzelle anwenden
+    var rowKeyMark = rdi + ":" + rid;
+    paintVisitedRows.add(rowKeyMark);
+    if (paintMode === "add"){
+      setRxSubscriptionRaw(rdi, rid, tdi, tid);
+    } else {
+      clearRxSubscriptionRaw(rdi, rid);
+    }
+
+    if (wrapEl) wrapEl.classList.add("painting");
+    td.classList.add("painting-hover");
+    ev.preventDefault();
+  };
+
+  // mouseover: während Painting anwenden
+  tbodyEl.onmouseover = function(ev){
+    if (!isPainting) return;
+    var td = ev.target.closest("td");
+    if (!td || td.dataset.role !== "cell") return;
+
+    var rdi = parseInt(td.dataset.rxDevIndex, 10);
+    var rid = td.dataset.rxChanId;
+    var tdi = parseInt(td.dataset.txDevIndex, 10);
+    var tid = td.dataset.txChanId;
+    if (!rid || !tid) return;
+
+    var mark = rdi + ":" + rid;
+    if (paintVisitedRows.has(mark)) return;
+    paintVisitedRows.add(mark);
+
+    if (paintMode === "add"){
+      setRxSubscriptionRaw(rdi, rid, tdi, tid);
+    } else {
+      clearRxSubscriptionRaw(rdi, rid);
+    }
+
+    td.classList.add("painting-hover");
+  };
+
+  // mouseup: Painting beenden, einmal rendern & persistieren
+  document.onmouseup = function(){
+    if (!isPainting) return;
+    isPainting = false;
+    paintMode = null;
+    paintVisitedRows = null;
+    if (wrapEl) wrapEl.classList.remove("painting");
+    renderMatrix();
+    persist();
   };
 }
 
@@ -602,7 +685,7 @@ function renameRxChannel(span, newName){
   persist();
 }
 
-// --------- Subscription Toggle ----------
+// --------- Subscription Toggle (Einzelklick) ----------
 function toggleSubscription(td){
   var rdi = parseInt(td.dataset.rxDevIndex, 10);
   var rid = td.dataset.rxChanId || "";

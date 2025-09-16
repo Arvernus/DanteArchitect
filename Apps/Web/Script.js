@@ -1043,9 +1043,7 @@ var pattern =
 
 var newName;
 if (renameChecked) {
-  // Explizit neu nach Pattern
   if (isNameConceptEnabled()) {
-    // Suffix des alten Namens beibehalten
     var partsOld = splitName(devName);
     var patternWithSuffix = partsOld.suffix ? (pattern + "-" + partsOld.suffix) : pattern;
     newName = window.generateUniqueNameFromPattern(patternWithSuffix, lastXmlDoc, /*excludeName*/ devName);
@@ -1053,7 +1051,8 @@ if (renameChecked) {
     newName = window.generateUniqueNameFromPattern(pattern, lastXmlDoc, /*excludeName*/ devName);
   }
 } else {
-  newName = keepName;
+  // alten Namen unverändert lassen
+  newName = devName;
 }
 
 
