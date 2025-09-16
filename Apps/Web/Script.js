@@ -164,6 +164,253 @@ function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent =
     });
   })();
 })();
+// --- Sidebar Tabs für Model/Device ---
+(function setupSidebarTabs(){
+  var tM = document.getElementById("tabModels");
+  var tD = document.getElementById("tabDevices");
+  var bM = document.getElementById("libSidebarBody");
+  var bD = document.getElementById("devSidebarBody");
+  function show(which){
+    if(!tM||!tD||!bM||!bD) return;
+    var isDev = (which === "dev");
+    bM.style.display = isDev ? "none" : "";
+    bD.style.display = isDev ? "" : "none";
+    tM.classList.toggle("active", !isDev);
+    tD.classList.toggle("active", isDev);
+  }
+  if(tM) tM.addEventListener("click", function(){ show("model"); });
+  if(tD) tD.addEventListener("click", function(){ show("dev"); });
+  // Default: Models sichtbar
+  show("model");
+})();
+
+// --- Device Wizard öffnen ---
+(function bindDeviceWizard(){
+  var btn = document.getElementById("btnDevWizardSidebar");
+  var modal = document.getElementById("devWizardModal");
+  var closeBtn = modal ? modal.querySelector("[data-role='devwiz-close']") : null;
+  var doImport = document.getElementById("devwizImport");
+  var respect = document.getElementById("devwizRespectNameConcept");
+
+  if(!btn || !modal) return;
+
+  btn.addEventListener("click", function(){
+    if(!window.lastXmlDoc){
+      alert("Kein Preset geladen.");
+      return;
+    }
+    modal.style.display = "";
+  });
+  if(closeBtn) closeBtn.addEventListener("click", function(){ modal.style.display = "none"; });
+
+  if(doImport){
+    doImport.addEventListener("click", function(){
+      try{
+        var countBefore = (window.DA_DEVLIB.load()||[]).length;
+        window.DA_DEVLIB.addDevicesFromPreset(window.lastXmlDoc, { nameConcept: !!(respect && respect.checked) });
+        modal.style.display = "none";
+        // Sidebar (Device) aktualisieren
+        window.DA_DEVLIB.renderSidebarList("#devSidebarBody");
+        var countAfter = (window.DA_DEVLIB.load()||[]).length;
+        alert((countAfter - countBefore) + " Geräte übernommen.");
+      }catch(e){
+        alert(e.message || String(e));
+      }
+    });
+  }
+})();
+
+// --- Initial beide Sidebars füllen ---
+(function renderLibraries(){
+  try { window.DA_LIB && window.DA_LIB.renderSidebar && window.DA_LIB.renderSidebar("#libSidebarBody"); } catch(_){}
+  try { window.DA_DEVLIB && window.DA_DEVLIB.renderSidebarList("#devSidebarBody"); } catch(_){}
+})();
+
+// --- Device Sidebar Actions (Delegation) ---
+(function wireDeviceSidebarActions(){
+  var host = document.getElementById("devSidebarBody");
+  if(!host) return;
+
+  // Click-Aktionen
+  host.addEventListener("click", function(ev){
+    var t = ev.target;
+    if(!t || !t.dataset) return;
+
+    if(t.dataset.role === "devlib-delete"){
+      var id = t.dataset.id || "";
+      var list = window.DA_DEVLIB.load();
+      var idx = list.findIndex(x=> String(x.id)===String(id));
+      if(idx>=0){
+        list.splice(idx,1);
+        window.DA_DEVLIB.save(list);
+        window.DA_DEVLIB.renderSidebarList(host);
+      }
+    }
+
+    if(t.dataset.role === "devlib-spawn"){
+      // Immer die zentrale Funktion verwenden (Duplikat-Check inklusive)
+      var id = t.dataset.id || "";
+      spawnDeviceFromDevLibById(id);
+    }
+
+    if(t.dataset.role === "devlib-edit"){
+      openDevEditModal(t.dataset.id);
+    }
+  });
+
+  // Dragstart (separat, NICHT im Click-Handler!)
+  host.addEventListener("dragstart", function(ev){
+    var item = ev.target.closest('[data-role="devlib-item"]');
+    if(!item) return;
+    var id = item.dataset.id;
+    try{
+      ev.dataTransfer.setData("application/x-da-devlib-id", id);
+      ev.dataTransfer.setData("text/plain", "DEVLIB:" + id); // Fallback
+      ev.dataTransfer.effectAllowed = "copy";
+    }catch(_){}
+  }, true);
+})();
+
+// Prüft, ob dieses Device (aus der Dev-Lib) im aktuellen Preset bereits existiert.
+// Kriterium: gleicher Name ODER gleiche MAC ODER gleiche Seriennummer.
+function deviceExistsInPreset(doc, devEntry){
+  if(!doc || !devEntry) return false;
+  var devEls = Array.prototype.slice.call((doc.querySelector("preset") || doc).getElementsByTagName("device"));
+
+  function txt(el, sel){
+    var n = el.querySelector(sel);
+    return n && n.textContent ? n.textContent.trim() : "";
+  }
+
+  for(var i=0;i<devEls.length;i++){
+    var de = devEls[i];
+    var n  = txt(de,"name");
+    var m  = txt(de,"mac");
+    var s  = txt(de,"serial");
+
+    if (n && devEntry.name && n === devEntry.name) return true;
+    if (m && devEntry.mac && m === devEntry.mac)   return true;
+    if (s && devEntry.serial && s === devEntry.serial) return true;
+  }
+  return false;
+}
+
+function spawnDeviceFromDevLibById(devId){
+  if(!window.lastXmlDoc){ alert("Kein Preset geladen."); return; }
+  var list = (window.DA_DEVLIB && window.DA_DEVLIB.load()) || [];
+  var d = list.find(x => String(x.id) === String(devId));
+  if(!d){ alert("Device nicht gefunden."); return; }
+
+  // Harter Stop bei Duplikaten (Name oder MAC oder Serial)
+  if (deviceExistsInPreset(window.lastXmlDoc, d)){
+    alert("Dieses Device ist im Preset bereits vorhanden.");
+    return;
+  }
+
+  var doc = window.lastXmlDoc;
+  var devEl = doc.createElement("device");
+
+  // Pflichtfelder 1:1 übernehmen (KEIN Auto-Umbenennen!)
+  var n = doc.createElement("name"); n.textContent = d.name; devEl.appendChild(n);
+  var man = doc.createElement("manufacturer_name"); man.textContent = d.manufacturer_name || ""; devEl.appendChild(man);
+  var mdl = doc.createElement("model_name"); mdl.textContent = d.model_name || ""; devEl.appendChild(mdl);
+
+  // optionale Felder
+  ["serial","mac","ipv4","dhcp","location","firmware_version","hardware_rev","notes"].forEach(function(k){
+    if(d[k]){ var e = doc.createElement(k); e.textContent = String(d[k]); devEl.appendChild(e); }
+  });
+
+  // Kanäle (ohne Abos)
+  (d.txchannels||[]).forEach(function(ch){
+    var tx = doc.createElement("txchannel");
+    if(ch.danteId!=null) tx.setAttribute("danteId", String(ch.danteId));
+    var lbl = doc.createElement("label"); lbl.textContent = String(ch.label||""); tx.appendChild(lbl);
+    devEl.appendChild(tx);
+  });
+  (d.rxchannels||[]).forEach(function(ch){
+    var rx = doc.createElement("rxchannel");
+    if(ch.danteId!=null) rx.setAttribute("danteId", String(ch.danteId));
+    var nm = doc.createElement("name"); nm.textContent = String(ch.name||""); rx.appendChild(nm);
+    devEl.appendChild(rx);
+  });
+
+  var root = doc.querySelector("preset") || doc.documentElement;
+  root.appendChild(devEl);
+
+  var xml = new XMLSerializer().serializeToString(doc);
+  try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_){}
+  if (typeof fillPresetTable === "function") fillPresetTable(doc);
+}
+
+(function setupDevEditModal(){
+  var modal = document.getElementById("devEditModal");
+  if(!modal) return;
+
+  var inpVendor = document.getElementById("devEditVendor");
+  var inpModel  = document.getElementById("devEditModel");
+  var inpName   = document.getElementById("devEditFullName");
+  var inpTxLbl  = document.getElementById("devEditTxLabels");
+  var inpRxLbl  = document.getElementById("devEditRxLabels");
+  var inpNotes  = document.getElementById("devEditNotes");
+  var btnClose  = modal.querySelector("[data-role='devedit-close']");
+  var btnSave   = document.getElementById("devEditSave");
+  var btnDelete = document.getElementById("devEditDelete");
+
+  var ctx = { id:null };
+
+  function close(){ modal.style.display="none"; }
+  function open(id){
+    var list = window.DA_DEVLIB.load();
+    var d = list.find(x => String(x.id)===String(id));
+    if(!d){ alert("Eintrag nicht gefunden."); return; }
+    ctx.id = d.id;
+    inpVendor.value = d.manufacturer_name || "";
+    inpModel.value  = d.model_name || "";
+    inpName.value   = d.name || "";
+    inpNotes.value  = d.notes || "";
+    inpTxLbl.value  = (d.txchannels||[]).map(c=>c.label||"").join(", ");
+    inpRxLbl.value  = (d.rxchannels||[]).map(c=>c.name ||"").join(", ");
+    modal.style.display="";
+  }
+
+  window.openDevEditModal = open;
+
+  if(btnClose) btnClose.addEventListener("click", close);
+
+  if(btnSave){
+    btnSave.addEventListener("click", function(){
+      var list = window.DA_DEVLIB.load();
+      var idx = list.findIndex(x => String(x.id)===String(ctx.id));
+      if(idx<0){ close(); return; }
+      var d = list[idx];
+
+      d.manufacturer_name = inpVendor.value.trim();
+      d.model_name        = inpModel.value.trim();
+      d.name              = inpName.value.trim();
+      d.notes             = inpNotes.value.trim();
+
+      // TX/RX Labels neu setzen
+      var txArr = (inpTxLbl.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      var rxArr = (inpRxLbl.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      d.txchannels = txArr.map((label,i)=>({ danteId: (d.txchannels && d.txchannels[i] ? d.txchannels[i].danteId : (i+1)), label }));
+      d.rxchannels = rxArr.map((name,i)=>({ danteId: (d.rxchannels && d.rxchannels[i] ? d.rxchannels[i].danteId : (i+1)), name }));
+
+      window.DA_DEVLIB.save(list);
+      window.DA_DEVLIB.renderSidebarList("#devSidebarBody");
+      close();
+    });
+  }
+
+  if(btnDelete){
+    btnDelete.addEventListener("click", function(){
+      var list = window.DA_DEVLIB.load();
+      var idx = list.findIndex(x => String(x.id)===String(ctx.id));
+      if(idx>=0){ list.splice(idx,1); window.DA_DEVLIB.save(list); window.DA_DEVLIB.renderSidebarList("#devSidebarBody"); }
+      close();
+    });
+  }
+})();
+
 
 // ---- Tables ----
 function fillPresetTable(xml){
@@ -1426,6 +1673,60 @@ modelId = (modelId || '').trim();
     writePresetToSession(new XMLSerializer().serializeToString(lastXmlDoc));
     fillPresetTable(lastXmlDoc);
   }
+
+// --- Device-Library → Drop auf Preset-Tabelle (mit Duplikat-Check) ---
+(function bindDevLibDropZone(){
+  var table = document.getElementById("presetTable");
+  if(!table) return;
+
+  function isDevDrag(ev){
+    try{
+      var types = ev.dataTransfer && ev.dataTransfer.types ? Array.from(ev.dataTransfer.types) : [];
+      return types.includes("application/x-da-devlib-id") || types.includes("text/plain");
+    }catch(_){}
+    return false;
+  }
+  function getDevIdFromDT(ev){
+    var id = "";
+    try { id = ev.dataTransfer.getData("application/x-da-devlib-id") || ""; } catch(_){}
+    if(!id){
+      try {
+        var t = ev.dataTransfer.getData("text/plain") || "";
+        if (t.indexOf("DEVLIB:") === 0) id = t.slice(7);
+      } catch(_){}
+    }
+    return id;
+  }
+
+  table.addEventListener("dragover", function(ev){
+    if (isDevDrag(ev)){
+      ev.preventDefault();
+      table.classList.add("drop-target");
+      try { ev.dataTransfer.dropEffect = "copy"; } catch(_){}
+    }
+  });
+  ["dragleave","dragend"].forEach(function(evt){
+    table.addEventListener(evt, function(){ table.classList.remove("drop-target"); });
+  });
+  table.addEventListener("drop", function(ev){
+    table.classList.remove("drop-target");
+    var id = getDevIdFromDT(ev);
+    if(!id) return;
+    ev.preventDefault();
+
+    // Vorab: Eintrag finden & Duplikate prüfen
+    var entry = ((window.DA_DEVLIB && window.DA_DEVLIB.load()) || []).find(function(x){ return String(x.id)===String(id); });
+    if(!entry) return;
+
+    if (deviceExistsInPreset(window.lastXmlDoc, entry)){
+      alert("Dieses Device ist im Preset bereits vorhanden.");
+      return;
+    }
+    // zentraler Insert (enthält ebenfalls den Check als Netz & doppelten Boden)
+    spawnDeviceFromDevLibById(id);
+  });
+})();
+
 
   table.addEventListener("dragover", function(e){
     if(!e.dataTransfer) return;

@@ -72,12 +72,17 @@
   <!-- Rechte Sidebar: Bibliothek -->
   <aside id="rightSidebar" class="sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-title">Model Bibliothek</div>
-      <div class="sidebar-actions">
-        <button id="btnLibWizardSidebar" class="btn" title="Modelle aus Preset übernehmen">⚙️</button>
-      </div>
-    </div>
-    <div id="libSidebarBody" class="sidebar-body"><!-- via JS --></div>
+  <div class="sidebar-title">
+    <button id="tabModels" class="btn">Model Bibliothek</button>
+    <button id="tabDevices" class="btn">Device Bibliothek</button>
+  </div>
+  <div class="sidebar-actions">
+    <button id="btnLibWizardSidebar" class="btn" title="Modelle aus Preset übernehmen">⚙️</button>
+    <button id="btnDevWizardSidebar" class="btn" title="Geräte aus Preset übernehmen">🗂️</button>
+  </div>
+</div>
+<div id="libSidebarBody" class="sidebar-body"><!-- via JS --></div>
+<div id="devSidebarBody" class="sidebar-body" style="display:none;"><!-- via JS --></div>
     <div class="sidebar-footer">
       <small class="muted">Modelle werden lokal im Browser gespeichert.</small>
     </div>
@@ -155,6 +160,64 @@
       <div style="grid-column: 1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
         <button id="libEditDelete" class="btn" style="border-color:#d93025; color:#d93025;">Löschen</button>
         <button id="libEditSave" class="btn">Speichern</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Device Edit Modal -->
+<div id="devEditModal" class="modal" style="display:none;">
+  <div class="modal-card" style="width:min(720px, 95vw);">
+    <div class="modal-header">
+      <div class="modal-title">Device-Bibliothekseintrag bearbeiten</div>
+      <div class="modal-actions">
+        <button class="btn" data-role="devedit-close">Schließen</button>
+      </div>
+    </div>
+    <div class="modal-body" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+      <label>Vendor
+        <input id="devEditVendor" type="text" placeholder="Hersteller">
+      </label>
+      <label>Modelname
+        <input id="devEditModel" type="text" placeholder="z. B. M32 Dante">
+      </label>
+      <label style="grid-column: 1 / -1;">Gerätename (voll)
+        <input id="devEditFullName" type="text" placeholder="z. B. KS-FMOD-5001495-Amp2-4">
+      </label>
+      <label style="grid-column: 1 / -1;">TX-Labels (kommagetrennt)
+        <input id="devEditTxLabels" type="text" placeholder="Ch1, Ch2, Ch3, …">
+      </label>
+      <label style="grid-column: 1 / -1;">RX-Labels (kommagetrennt)
+        <input id="devEditRxLabels" type="text" placeholder="In1, In2, In3, …">
+      </label>
+      <label style="grid-column: 1 / -1;">Notizen
+        <textarea id="devEditNotes" rows="3" placeholder="Optional"></textarea>
+      </label>
+      <div style="grid-column: 1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+        <button id="devEditDelete" class="btn" style="border-color:#d93025; color:#d93025;">Löschen</button>
+        <button id="devEditSave" class="btn">Speichern</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Device-Wizard Modal -->
+<div id="devWizardModal" class="modal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Geräte übernehmen</div>
+      <div class="modal-actions">
+        <label class="chk">
+          <input id="devwizRespectNameConcept" type="checkbox" checked>
+          Prefix/Suffix aus aktueller Einstellung berücksichtigen
+        </label>
+        <button class="btn" data-role="devwiz-close">Schließen</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="muted">Alle Geräte des aktuell geladenen Presets werden ohne Abonnements in die Device-Bibliothek übernommen.</div>
+      <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+        <button id="devwizImport" class="btn">Übernehmen</button>
       </div>
     </div>
   </div>

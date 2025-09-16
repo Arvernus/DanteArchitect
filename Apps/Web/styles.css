@@ -151,3 +151,10 @@ body.with-right-sidebar .main{ margin-right:320px; }
 /* Painting UX (optional) */
 .matrix-wrap.painting { cursor: crosshair; }
 .matrix .cell.painting-hover { outline: 1px dashed #82b1ff; }
+
+/* Sidebar Tabs */
+.sidebar-title .btn { padding:4px 8px; }
+.sidebar-title .btn.active { background:#eef3ff; border-color:#c8d6ff; }
+
+/* DnD Ziel in der Preset-Tabelle hervorheben */
+.table.drop-target { outline: 2px dashed #82b1ff; outline-offset: 2px; }

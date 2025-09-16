@@ -896,3 +896,207 @@ return {
   getNamePattern,
   listModels: function(){ return load().slice(); },
 };})();
+
+// === Device Library v1 =======================================================
+// Speichert reale Geräte aus einem Preset (ohne Subscriptions),
+// inklusive Name (Prefix/Suffix berücksichtigt), Vendor/Model, Channels, Simple-Fields.
+// NICHT virtuell.
+window.DA_DEVLIB = (function(){
+  const LKEY = "DA_DEVICE_LIBRARY_V1";
+
+  function load(){
+    try{
+      const raw = localStorage.getItem(LKEY);
+      if(!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    }catch(_){ return []; }
+  }
+  function save(list){
+    // einfache Dedupe nach Name+Vendor+Model+TX/RX Signatur
+    const seen = new Set();
+    const out = [];
+    list.forEach(d => {
+      const sig = deviceSignature(d);
+      if(!seen.has(sig)){ seen.add(sig); out.push(d); }
+    });
+    localStorage.setItem(LKEY, JSON.stringify(out));
+  }
+  function exportJson(){
+    return JSON.stringify({ version:1, devices: load() }, null, 2);
+  }
+  function importJson(jsonText){
+    const parsed = JSON.parse(jsonText);
+    const list = Array.isArray(parsed?.devices) ? parsed.devices : (Array.isArray(parsed) ? parsed : null);
+    if(!list) throw new Error("Ungültiges JSON-Format für Device Library (v1).");
+    const cur = load();
+    save(cur.concat(list.map(normalize)));
+    return list.length;
+  }
+
+  function normalize(d){
+    const n = Object.assign({
+      id: "dev_"+Math.random().toString(36).slice(2,10)+Date.now().toString(36),
+      non_virtual: true,     // wichtig: echte Geräte
+      createdAt: Date.now(),
+      notes: ""
+    }, d||{});
+    // Pflichtfelder
+    n.name = String(n.name||"");
+    n.manufacturer_name = String(n.manufacturer_name||"");
+    n.model_name = String(n.model_name||"");
+    n.txchannels = Array.isArray(n.txchannels) ? n.txchannels : [];
+    n.rxchannels = Array.isArray(n.rxchannels) ? n.rxchannels : [];
+    // simple device fields (falls vorhanden)
+    ["serial","mac","ipv4","dhcp","location","firmware_version","hardware_rev"].forEach(k=>{
+      if(n[k]==null) n[k]="";
+      else n[k]=String(n[k]);
+    });
+    return n;
+  }
+  function deviceSignature(d){
+    const txSig = (d.txchannels||[]).map(c=>String(c?.label||"")).join("|");
+    const rxSig = (d.rxchannels||[]).map(c=>String(c?.name||"")).join("|");
+    return [
+      (d.manufacturer_name||"").toLowerCase().trim(),
+      (d.model_name||"").toLowerCase().trim(),
+      (d.name||"").toLowerCase().trim(),
+      `${(d.txchannels||[]).length}x${(d.rxchannels||[]).length}`,
+      `TX{${txSig}}::RX{${rxSig}}`
+    ].join("::");
+  }
+
+  // Hilfen für XML
+  function qAllLocal(root, ln){
+    const out=[]; const all=root.getElementsByTagName("*");
+    for(let i=0;i<all.length;i++){ const n=all[i].localName||all[i].nodeName; if(n===ln) out.push(all[i]); }
+    return out;
+  }
+  function findByLocalNames(root, names){
+    const all = root.getElementsByTagName("*");
+    for(let i=0;i<all.length;i++){ const ln=all[i].localName||all[i].nodeName; if(names.includes(ln)) return all[i]; }
+    return null;
+  }
+  function readText(root, prim, fb){
+    let el = findByLocalNames(root, prim);
+    if(!el && fb && fb.length) el = findByLocalNames(root, fb);
+    return el && el.textContent ? el.textContent.trim() : "";
+  }
+
+  // Name split/join kompatibel zur App
+  function splitName(full){
+    const s = String(full||"").trim();
+    if(!s) return {prefix:"", suffix:""};
+    // rechtes -\d+ als Zähler, falls danach -[A-Za-z] folgt -> Rest ist Suffix
+    let idx=-1, m, re=/-(\d+)/g;
+    while((m=re.exec(s))){
+      const after=re.lastIndex, rest=s.slice(after);
+      if(/-[A-Za-z]/.test(rest)) idx=after;
+    }
+    if(idx!==-1 && s.charAt(idx)==='-') return { prefix:s.slice(0,idx), suffix:s.slice(idx+1) };
+    const m2 = s.match(/^(.*-\d+)(?:-(.+))?$/);
+    if(m2) return { prefix:m2[1], suffix:m2[2]||"" };
+    const i = s.lastIndexOf("-");
+    if(i<0) return {prefix:s, suffix:""};
+    return {prefix:s.slice(0,i), suffix:s.slice(i+1)};
+  }
+  function joinName(prefix, suffix){
+    prefix=String(prefix||""); suffix=String(suffix||"");
+    return suffix ? (prefix+"-"+suffix) : prefix;
+  }
+
+  // Hauptfunktion: alle Geräte aus Preset übernehmen
+  function addDevicesFromPreset(xmlDoc, opts){
+    opts = opts || {};
+    const nameConcept = !!opts.nameConcept;
+    const out = load();
+
+    // Geräte finden (robust)
+    let devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("preset > device"));
+    if(!devEls.length) devEls = Array.prototype.slice.call(xmlDoc.querySelectorAll("device"));
+
+    devEls.forEach(de=>{
+      const name = readText(de, ["name"], []);
+      const man  = readText(de, ["manufacturer_name","manufacturer"], ["manufacturerName","vendor","brand"]);
+      const modn = readText(de, ["model_name"], ["model","product_name"]);
+      const txEls = qAllLocal(de,"txchannel");
+      const rxEls = qAllLocal(de,"rxchannel");
+
+      // Channels OHNE subscriptions übernehmen
+      const txchannels = txEls.map((tx,i)=>{
+        const id = String(tx.getAttribute("danteId")||i+1);
+        const lblEl = findByLocalNames(tx,["label"]);
+        const label = (lblEl && lblEl.textContent ? lblEl.textContent.trim() : ("Ch"+(i+1)));
+        return { danteId:id, label };
+      });
+      const rxchannels = rxEls.map((rx,i)=>{
+        const id = String(rx.getAttribute("danteId")||i+1);
+        const nmEl = findByLocalNames(rx,["name"]);
+        const rnm = (nmEl && nmEl.textContent ? nmEl.textContent.trim() : ("In"+(i+1)));
+        return { danteId:id, name:rnm };
+      });
+
+      // ggf. Prefix/Suffix bewahren (nur Anzeige/Felder; der gespeicherte name bleibt 1:1)
+      let finalName = String(name||"");
+      if(nameConcept){
+        const p = splitName(finalName);
+        finalName = joinName(p.prefix, p.suffix); // idempotent – dient nur Klarheit
+      }
+
+      const devEntry = normalize({
+        name: finalName,
+        manufacturer_name: man||"",
+        model_name: modn||"",
+        txchannels, rxchannels,
+        // einfache Felder falls vorhanden (optional)
+        serial: readText(de, ["serial"], []),
+        mac: readText(de, ["mac"], []),
+        ipv4: readText(de, ["ipv4"], []),
+        dhcp: readText(de, ["dhcp"], []),
+        location: readText(de, ["location"], []),
+        firmware_version: readText(de, ["firmware_version"], []),
+        hardware_rev: readText(de, ["hardware_rev"], []),
+        non_virtual: true
+      });
+
+      out.push(devEntry);
+    });
+
+    save(out);
+    return out.length;
+  }
+
+  // einfache Render-Helfer (Liste → HTML)
+function toListItem(d){
+  const p = splitName(d.name);
+  const title = p.suffix ? (p.prefix + "-") : p.prefix;
+  const sub   = p.suffix || "";
+  // draggable + data-* für DnD und Buttons
+  return (
+    `<div class="lib-item" draggable="true" data-role="devlib-item" data-id="${d.id}">
+      <div><strong>${escapeHtml(title)}</strong>${sub?("<br><span class='muted'>"+escapeHtml(sub)+"</span>"):""}</div>
+      <div class="muted" style="font-size:12px;">${escapeHtml(d.manufacturer_name)} — ${escapeHtml(d.model_name)} · ${d.txchannels.length}×${d.rxchannels.length}</div>
+      <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="btn" data-role="devlib-spawn" data-id="${d.id}">Einfügen</button>
+        <button class="btn" data-role="devlib-edit"  data-id="${d.id}">Bearbeiten</button>
+        <button class="btn" data-role="devlib-delete" data-id="${d.id}" style="border-color:#d93025; color:#d93025;">Löschen</button>
+      </div>
+    </div>`
+  );
+}
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function renderSidebarList(container){
+    const el = (typeof container==="string") ? document.querySelector(container) : container;
+    if(!el) return;
+    const list = load();
+    el.innerHTML = list.map(toListItem).join("") || "<div class='muted'>Noch keine Geräte in der Bibliothek.</div>";
+  }
+
+  // Public
+  return {
+    load, save, exportJson, importJson,
+    addDevicesFromPreset,
+    renderSidebarList
+  };
+})();
