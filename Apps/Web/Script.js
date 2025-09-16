@@ -411,6 +411,21 @@ function spawnDeviceFromDevLibById(devId){
   }
 })();
 
+// Helper: Virtual-Badge anhand des Namens setzen (idempotent)
+function applyVirtualBadge(td, fullName){
+  if (!td) return;
+  var old = td.querySelector(".badge-virtual");
+  if (old) old.remove();
+  try{
+    if (isVirtualName && isVirtualName(fullName)) {
+      var badge = document.createElement("span");
+      badge.className = "badge-virtual";
+      badge.textContent = "Virtual";
+      td.appendChild(badge);
+    }
+  }catch(_){}
+}
+
 
 // ---- Tables ----
 function fillPresetTable(xml){
@@ -452,15 +467,7 @@ function fillPresetTable(xml){
       // Namenskonzept AUS: einzeilig
       tdName.textContent = name || "";
     }
-    // Virtual-Badge anzeigen, falls Name noch Platzhalter/Default trägt
-    try {
-      if (isVirtualName(name)) {
-        var badge = document.createElement("span");
-        badge.className = "badge-virtual";
-        badge.textContent = "Virtual";
-        tdName.appendChild(badge);
-      }
-    } catch(_){}
+    applyVirtualBadge(tdName, name);
 
     var tdTx = document.createElement("td");
     tdTx.textContent = tx;
@@ -1744,5 +1751,21 @@ modelId = (modelId || '').trim();
       var modelId = e.dataTransfer.getData("text/plain");
       if(modelId) addDeviceFromModelId(modelId);
     } catch(_) {}
+  });
+})();
+
+// Nach Zurück-Navigation (BFCache/pageshow) Preset-Tabelle neu aufbauen
+(function restorePresetOnPageShow(){
+  window.addEventListener("pageshow", function(){
+    try{
+      var xml = sessionStorage.getItem("DA_PRESET_XML");
+      if (!xml) return;
+      if (!window.lastXmlDoc) {
+        window.lastXmlDoc = (new DOMParser()).parseFromString(xml, "application/xml");
+      }
+      if (typeof fillPresetTable === "function") {
+        fillPresetTable(window.lastXmlDoc);
+      }
+    }catch(_){}
   });
 })();
