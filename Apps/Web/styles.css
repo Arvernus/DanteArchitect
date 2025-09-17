@@ -185,3 +185,86 @@ body.with-right-sidebar .main{ margin-right:320px; }
 }
 .lib-item.is-present .badge { opacity: 1; } /* falls du Badges verwendest */
 
+/* === Dante Interface Selector === */
+#ifaceSelect {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+#ifaceSelect label {
+  font-weight: 500;
+  color: #333;
+}
+
+#ifaceDropdown {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background-color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#ifaceDropdown:hover {
+  border-color: #888;
+}
+
+#ifaceDropdown:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 4px rgba(0,123,255,0.5);
+}
+
+/* Interface-Dropdown links neben dem Scan-Button */
+#card-online .card-header .card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ifaceSelect .iface-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: #333;
+  margin: 0; /* bündig zum Button */
+}
+
+#ifaceDropdown {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#ifaceDropdown:hover { border-color: #888; }
+#ifaceDropdown:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 4px rgba(0,123,255,.5);
+}
+
+/* Statusbar: mittige Anzeige für "letzter Scan" */
+.statusbar { position: fixed; } /* ist bei dir bereits gesetzt; Zeile ok */
+.status-center{
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;   /* verhindert, dass Klicks auf Buttons blockiert werden */
+}
+.status-center .muted { opacity: .7; }

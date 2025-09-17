@@ -170,7 +170,10 @@ function setLed(state){
 }
 function setStatusText(txt){ var t=$("#statusText"); if(t) t.textContent=txt; }
 function setSpinner(active){ var sp=$("#statusSpinner"); if(!sp) return; if(active) sp.classList.add("active"); else sp.classList.remove("active"); }
-function setTimestamp(ts){ var el=$("#statusTimestamp"); if(el) el.textContent = ts ? ("Stand: "+new Date(ts).toLocaleTimeString()) : ""; }
+function setTimestamp(ts){
+  var el = $("#statusLastScan");
+  if (el) el.textContent = ts ? ("letzter Scan: " + new Date(ts).toLocaleTimeString()) : "";
+}
 
 // ---- Layout: rechte Sidebar (schiebt nur #mainContent, nicht die Statusbar) ----
 (function enableRightSidebar(){
@@ -1727,10 +1730,135 @@ if (renameChecked) {
   });
 })();
 
-// ---- Online-Helper (Dummy) ----
-(function mockOnline(){
-  setLed("disconnected"); setStatusText("Offline"); setSpinner(false);
+// ===== Dante Online Helper (mDNS via lokaler Node-Helper) =====
+(function danteOnlineHelper(){
+  const noop = ()=>{};
+  const setLed = (typeof window.setLed === "function") ? window.setLed : noop;
+  const setStatusText = (typeof window.setStatusText === "function") ? window.setStatusText : noop;
+  const setSpinner = (typeof window.setSpinner === "function") ? window.setSpinner : noop;
+  const setTimestamp = (typeof window.setTimestamp === "function") ? window.setTimestamp : noop;
+
+  const fillOnlineTable = (typeof window.fillOnlineTable === "function")
+    ? window.fillOnlineTable
+    : function(list){
+        const root = document.getElementById("onlineTable") || document.getElementById("online-list");
+        if (!root) { console.debug("onlineTable not found; devices:", list); return; }
+        const rows = (list||[]).map(d => `<tr><td>${d.name||""}</td><td>${d.ip||""}</td><td>${d.manufacturer||""}</td><td>${d.model||""}</td></tr>`).join("");
+        root.innerHTML = `<table><thead><tr><th>Name</th><th>IP</th><th>Hersteller</th><th>Modell</th></tr></thead><tbody>${rows}</tbody></table>`;
+      };
+
+  const HELPER = { base: "http://localhost:53535", health: "/health", scan: "/scan" };
+    
+  // --- Online-Tabellenkopf: Count links, "Stand" rechts ---
+function ensureOnlineHead(){
+  const tbl = document.getElementById("onlineTable");
+  if (!tbl) return {};
+  const thead = tbl.tHead || tbl.createTHead();
+
+  let row = document.getElementById("onlineHeadMetrics");
+  if (!row) {
+    row = document.createElement("tr");
+    row.id = "onlineHeadMetrics";
+
+    const thCount = document.createElement("th");
+    thCount.id = "onlineCountHeader";
+    thCount.colSpan = 3; // Tabelle hat 3 Spalten: Name, IP, Hersteller
+    thCount.textContent = "Noch kein Scan";
+
+    row.appendChild(thCount);
+    thead.insertBefore(row, thead.firstChild || null);
+  }
+  return { countEl: document.getElementById("onlineCountHeader") };
+}
+
+  try {
+    const headers = Array.from(document.querySelectorAll(".card .card-header"));
+    const onlineHeader = headers.find(h => (h.querySelector(".card-title")?.textContent || "").trim() === "Online");
+    if (onlineHeader) {
+      const actions = onlineHeader.querySelector(".card-actions") || onlineHeader.appendChild(document.createElement("div"));
+      actions.classList.add("card-actions");
+      const btn = document.createElement("button");
+      btn.id = "btnOnlineScan"; btn.className = "btn"; btn.textContent = "Scan";
+      actions.appendChild(btn);
+      const label = document.createElement("label");
+      label.className = "chk"; label.style.marginLeft = "8px";
+      label.innerHTML = `<input id="chkOnlineAuto" type="checkbox"> Auto`;
+      actions.appendChild(label);
+    }
+  } catch(_){}
+
+    async function health(opts = { silent: false }) {
+      try {
+        if (!opts.silent) setSpinner(true);
+        const r = await fetch(HELPER.base + HELPER.health, { cache: "no-store" });
+        if (!r.ok) throw new Error("health " + r.status);
+        await r.json();
+        setLed("connected");
+        setStatusText("Helper verbunden");
+        // Wichtig: Stand NICHT hier aktualisieren
+        return true;
+      } catch {
+        setLed("disconnected");
+        setStatusText("Offline");
+        return false;
+      } finally {
+        if (!opts.silent) setSpinner(false);
+      }
+    }
+
+async function scanOnce() {
+  const { countEl, standEl } = ensureOnlineHead();
+
+  const ok = await health(); // sichtbarer Ping
+  if (!ok) {
+    fillOnlineTable([]);
+    if (countEl) countEl.textContent = "Noch kein Scan";
+    // "Stand" NICHT ändern (nur bei Scan-Erfolg)
+    return;
+  }
+
+  try {
+    setSpinner(true);
+    const r = await fetch(`${HELPER.base + HELPER.scan}?timeout=5000&ipver=4`, { cache: "no-store" });
+    const j = await r.json();
+    const list = Array.isArray(j?.devices) ? j.devices : [];
+    fillOnlineTable(list);
+
+    if (countEl) countEl.textContent = `${list.length} Geräte`;
+    // "letzter Scan" steht jetzt mittig in der Statuszeile:
+    setTimestamp(j.ts || Date.now());
+  } catch (e) {
+    console.error(e);
+    fillOnlineTable([]);
+    if (countEl) countEl.textContent = "0 Geräte";
+    // "Stand" NICHT ändern
+  } finally {
+    setSpinner(false);
+  }
+}
+
+  (function bind(){
+    ensureOnlineHead();
+    const btn = document.getElementById("btnOnlineScan");
+    const chk = document.getElementById("chkOnlineAuto");
+    if (btn) btn.addEventListener("click", scanOnce);
+    let timer = null;
+    if (chk) {
+      chk.addEventListener("change", (e) => {
+        if (e.target.checked) {
+          scanOnce();
+          timer = setInterval(scanOnce, 10000);
+        } else if (timer) {
+          clearInterval(timer); timer = null;
+        }
+      });
+    }
+    health();
+    // Status (LED/Text) alle 22s aktualisieren – ohne Spinner, ohne Stand
+    setInterval(() => health({ silent: true }), 2000);
+  })();
 })();
+// ===== /Dante Online Helper =====
 
 // ---- Bibliothek Sidebar rendern + Wizard binden ----
 window.renderLibrarySidebar = function(){
@@ -1899,3 +2027,101 @@ if (typeof window.closeAllMenus !== "function"){
 }
 document.addEventListener("click", function(){ window.closeAllMenus(); });
 
+// --- Netzwerkschnittstellen-Auswahl (links neben "Scan" im Header) ---
+(function danteIfacesUI(){
+  const HELPER = { base: "http://127.0.0.1:53535" };
+
+  function ensureHeaderAndActions() {
+    const card = document.getElementById("card-online");
+    if (!card) return {};
+    const header = card.querySelector(".card-header");
+    if (!header) return {};
+    let actions = header.querySelector(".card-actions");
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "card-actions";
+      header.appendChild(actions);
+    }
+    // Scan-Button sicherstellen, falls dein anderer Code ihn noch nicht erstellt hat
+    let btn = document.getElementById("btnOnlineScan");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = "btnOnlineScan";
+      btn.className = "btn";
+      btn.textContent = "Scan";
+      actions.appendChild(btn);
+      // optional: Auto-Checkbox direkt nach Scan
+      if (!document.getElementById("chkOnlineAuto")) {
+        const label = document.createElement("label");
+        label.className = "chk";
+        label.style.marginLeft = "8px";
+        label.innerHTML = `<input id="chkOnlineAuto" type="checkbox"> Auto`;
+        actions.appendChild(label);
+      }
+    }
+    return { actions, btn };
+  }
+
+  async function loadIfaces(){
+    try {
+      const r = await fetch(HELPER.base + "/ifaces", {cache:"no-store"});
+      const j = await r.json();
+      renderIfaces(j.interfaces || [], j.selected);
+    } catch(e){
+      console.error("ifaces load failed", e);
+    }
+  }
+
+  function renderIfaces(list, selected){
+    const { actions, btn } = ensureHeaderAndActions();
+    if (!actions) return;
+
+    let root = document.getElementById("ifaceSelect");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "ifaceSelect";
+      // vor den Scan-Button einsetzen (links davon)
+      if (btn && btn.parentElement === actions) {
+        actions.insertBefore(root, btn);
+      } else {
+        actions.prepend(root);
+      }
+    }
+
+    let html = `<label class="iface-label">Netzwerkadapter:
+      <select id="ifaceDropdown">
+        <option value="">Alle Adapter</option>`;
+    for (const nic of list) {
+      const ips = (nic.ipv4 || []).concat(nic.ipv6 || []);
+      for (const ip of ips) {
+        const sel = (selected && selected.includes(ip)) ? "selected" : "";
+        html += `<option value="${ip}" ${sel}>${nic.name} - ${ip}</option>`;
+      }
+    }
+    html += `</select></label>`;
+    root.innerHTML = html;
+
+    const dd = document.getElementById("ifaceDropdown");
+    if (dd && !dd._bound) {
+      dd.addEventListener("change", async (e)=>{
+        const ip = e.target.value;
+        try {
+          const body = ip ? {ips:[ip]} : {};
+          await fetch(HELPER.base + "/ifaces", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify(body)
+          });
+        } catch(err){
+          console.error("select iface failed", err);
+        }
+      });
+      dd._bound = true;
+    }
+  }
+
+  // Initial laden, wenn DOM bereit
+  const onReady = (fn) => (document.readyState === "loading")
+    ? document.addEventListener("DOMContentLoaded", fn)
+    : fn();
+  onReady(loadIfaces);
+})();
