@@ -901,6 +901,7 @@ function renderSidebarInto(container) {
   }
 
   // ===== Public API =====
+// ===== Public API =====
 return {
   openAdoptWizard,
   renderSidebarInto,
@@ -908,7 +909,12 @@ return {
   makeDeviceXml,
   getNamePattern,
   listModels: function(){ return load().slice(); },
-};})();
+  // NEU: Edit-Dialog öffentlich machen
+  openEditModal
+};
+
+})();
+
 
 // === Device Library v1 =======================================================
 // Speichert reale Geräte aus einem Preset (ohne Subscriptions),

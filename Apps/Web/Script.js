@@ -418,6 +418,20 @@ function setTimestamp(ts){
   }, true);
 })();
 
+// Fallback, falls Lib.js einmal noch nicht geladen war
+function tryOpenLibEditModalFallback(id){
+  if (window.DA_LIB && typeof DA_LIB.openEditModal === "function") {
+    DA_LIB.openEditModal(id);
+    return;
+  }
+  if (typeof window.openLibEditModal === "function") {
+    window.openLibEditModal(id);
+    return;
+  }
+  alert("Bearbeiten-Dialog nicht verfügbar (Lib-Modul nicht geladen).");
+}
+
+
 
 // Prüft, ob dieses Device (aus der Dev-Lib) im aktuellen Preset bereits existiert.
 // Kriterium: gleicher Name ODER gleiche MAC ODER gleiche Seriennummer.
