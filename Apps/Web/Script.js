@@ -50,26 +50,130 @@ function getSelectionInInput(input){
   };
 }
 
+(function(){
+  // Immer eine funktionsfähige Variante bereitstellen
+  var invoker = function(modelId){
+    try {
+      var fn = (typeof window.spawnModelFromLibById === "function")
+        ? window.spawnModelFromLibById
+        : (typeof spawnModelFromLibById === "function" ? spawnModelFromLibById : null);
+      if (fn) return fn(modelId);
+    } catch(_) {}
+    console.warn("[DanteArchitect] spawnModelFromLibById nicht verfügbar");
+  };
+
+  try {
+    // Verhindert, dass Nicht-Funktionen zugewiesen werden
+    Object.defineProperty(window, "__invokeSpawnModel", {
+      configurable: true,
+      get: function(){ return invoker; },
+      set: function(v){ if (typeof v === "function") invoker = v; },
+    });
+  } catch(_){
+    // Fallback für ältere Browser
+    window.__invokeSpawnModel = invoker;
+  }
+})();
+if (typeof window.__invokeSpawnModel !== "function") {
+  window.__invokeSpawnModel = function(modelId){
+    try {
+      var fn = (typeof window.spawnModelFromLibById === "function")
+        ? window.spawnModelFromLibById
+        : (typeof spawnModelFromLibById === "function" ? spawnModelFromLibById : null);
+      if (fn) return fn(modelId);
+    } catch(_) {}
+    alert("Aktion nicht verfügbar: spawnModelFromLibById fehlt.");
+  };
+}
+var __invokeSpawnModel = window.__invokeSpawnModel;
+
+
+function __invokeSpawnModel(modelId){
+  try {
+    var fn = (window && typeof window.spawnModelFromLibById === "function")
+      ? window.spawnModelFromLibById
+      : (typeof spawnModelFromLibById === "function" ? spawnModelFromLibById : null);
+    if (fn) return fn(modelId);
+  } catch(_) {}
+  alert("Aktion nicht verfügbar: spawnModelFromLibById fehlt.");
+}
+
 
 // === Namenskonzept (global) ===
 var NAME_SCHEME_KEY = "DA_NAME_SCHEME_ENABLED";
 function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_KEY) === "1"; } catch(_) { return false; } }
 function setNameConceptEnabled(on){ try { localStorage.setItem(NAME_SCHEME_KEY, on ? "1" : "0"); } catch(_) {} }
 
-// [n]-sicheres Splitten: Suffix beginnt erst NACH "-<Zahl>-..."
-function splitName(full){
-  full = String(full || "");
-  var m = full.match(/^(.*-\d+)(?:-(.+))?$/);
-  if (m) return { prefix: m[1], suffix: m[2] ? m[2] : "" };
-  var idx = full.lastIndexOf("-");
-  if (idx < 0) return { prefix: full, suffix: "" };
-  return { prefix: full.slice(0, idx), suffix: full.slice(idx + 1) };
+var SUFFIX_OVR_KEY = "DA_SUFFIX_OVERRIDES_V1";
+function __daReadSuffixMap(){ try { return JSON.parse(localStorage.getItem(SUFFIX_OVR_KEY) || "{}"); } catch(_){ return {}; } }
+function __daWriteSuffixMap(m){ try { localStorage.setItem(SUFFIX_OVR_KEY, JSON.stringify(m||{})); } catch(_){} }
+function getSuffixOverride(name){ var m=__daReadSuffixMap(); return m && m[name] != null ? String(m[name]) : null; }
+function setSuffixOverride(name, suf){ var m=__daReadSuffixMap(); if(!suf){ delete m[name]; } else { m[name] = String(suf); } __daWriteSuffixMap(m); }
+function clearSuffixOverride(name){ var m=__daReadSuffixMap(); if(m.hasOwnProperty(name)){ delete m[name]; __daWriteSuffixMap(m);} }
+function moveSuffixOverride(oldName, newName){
+  if (!oldName || !newName || oldName===newName) return;
+  var m = __daReadSuffixMap();
+  if (m.hasOwnProperty(oldName)) { m[newName] = m[oldName]; delete m[oldName]; __daWriteSuffixMap(m); }
 }
-function joinName(prefix, suffix){
-  prefix = String(prefix || ""); suffix = String(suffix || "");
-  return suffix ? (prefix + "-" + suffix) : prefix;
+// Expose (für Lib.js usw.)
+window.getSuffixOverride = getSuffixOverride;
+window.setSuffixOverride = setSuffixOverride;
+window.clearSuffixOverride = clearSuffixOverride;
+window.moveSuffixOverride = moveSuffixOverride;
+
+// Automatische Erkennung (ohne Overrides) – zentrale Heuristik
+function splitNameAuto(full){
+  var s = String(full || "").trim();
+  if (!s) return { prefix: "", suffix: "" };
+  var idxCandidate = -1;
+  var re = /-(\d+)/g, m;
+  while ((m = re.exec(s))) {
+    var afterNumIdx = re.lastIndex;
+    var rest = s.slice(afterNumIdx);
+    if (/-[A-Za-z]/.test(rest)) idxCandidate = afterNumIdx;
+  }
+  if (idxCandidate !== -1 && s.charAt(idxCandidate) === "-") {
+    return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate+1) };
+  }
+  var m2 = s.match(/^(.*-\d+)(?:-(.+))?$/);
+  if (m2) return { prefix: m2[1], suffix: m2[2] || "" };
+  var i = s.lastIndexOf("-");
+  if (i < 0) return { prefix: s, suffix: "" };
+  return { prefix: s.slice(0, i), suffix: s.slice(i+1) };
 }
 
+// [n]-sicheres Splitten: Suffix beginnt erst NACH "-<Zahl>-..."
+function splitName(full){
+  const s = String(full||"").trim();
+  if (!s) return {prefix:"", suffix:""};
+  // 1) Override bevorzugen (global oder aus localStorage)
+  let ov = null;
+  try { ov = (window.getSuffixOverride ? window.getSuffixOverride(s) : null); } catch(_){}
+  if (ov == null) {
+    try {
+      const raw = localStorage.getItem("DA_SUFFIX_OVERRIDES_V1") || "{}";
+      const map = JSON.parse(raw);
+      if (map && map.hasOwnProperty(s)) ov = String(map[s]);
+    } catch(_){}
+  }
+  if (ov != null) {
+    if (s.endsWith("-"+ov)) return { prefix: s.slice(0, -ov.length-1), suffix: ov };
+    return { prefix: s, suffix: ov };
+  }
+
+  // 2) Automatische Erkennung (wie gehabt)
+  let idx=-1, m, re=/-(\d+)/g;
+  while((m=re.exec(s))){
+    const after=re.lastIndex, rest=s.slice(after);
+    if(/-[A-Za-z]/.test(rest)) idx=after;
+  }
+  if(idx!==-1 && s.charAt(idx)==='-') return { prefix:s.slice(0,idx), suffix:s.slice(idx+1) };
+  const m2 = s.match(/^(.*-\d+)(?:-(.+))?$/);
+  if(m2) return { prefix:m2[1], suffix:m2[2]||"" };
+  const i = s.lastIndexOf("-");
+  if(i<0) return {prefix:s, suffix:""};
+  return {prefix:s.slice(0,i), suffix:s.slice(i+1)};
+}
 // Ist der Gerätename noch „virtuell“ (Default-Pattern im Prefix / Platzhalter 'xxxx')?
 function isVirtualName(fullName){
   var s = String(fullName || "");
@@ -334,11 +438,14 @@ host.addEventListener("dragstart", function(ev){
     // Plus → einfügen
     if (t.dataset && t.dataset.role === "lib-spawn"){
       var id = t.dataset.id || "";
-      spawnModelFromLibById(id);
-      closeAllMenus();
+(
+  (typeof window.__invokeSpawnModel === 'function') ? window.__invokeSpawnModel
+  : (typeof window.spawnModelFromLibById === 'function') ? window.spawnModelFromLibById
+  : (typeof spawnModelFromLibById === 'function') ? spawnModelFromLibById
+  : function(mid){ alert('Aktion nicht verfügbar: spawnModelFromLibById fehlt.'); }
+)(id);      closeAllMenus();
       return;
-    }
-
+}    
     // Bearbeiten
     if (t.dataset && t.dataset.role === "lib-edit"){
       closeAllMenus();
@@ -852,38 +959,18 @@ function isNameConceptEnabled(){ try { return localStorage.getItem(NAME_SCHEME_K
 function setNameConceptEnabled(on){ try { localStorage.setItem(NAME_SCHEME_KEY, on ? "1" : "0"); } catch(_) {} }
 function splitName(full){
   var s = String(full || "").trim();
-  if (!s) return { prefix: "", suffix: "" };
-
-  // Kandidaten: alle Vorkommen von "-<Ziffern>"
-  // Wir wählen das rechteste, hinter dem im restlichen String noch "-<Buchstabe>" vorkommt.
-  var idxCandidate = -1;
-  var re = /-(\d+)/g, m;
-  while ((m = re.exec(s))) {
-    var afterNumIdx = re.lastIndex;        // Position direkt NACH den Ziffern
-    var rest = s.slice(afterNumIdx);       // Rest danach
-    if (/-[A-Za-z]/.test(rest)) {          // nur Kandidaten akzeptieren, wenn später ein "-<Buchstabe>" folgt
-      idxCandidate = afterNumIdx;
-    }
+  // Override prüfen
+  var ov = (typeof getSuffixOverride === "function") ? getSuffixOverride(s) : null;
+  if (ov != null) {
+    if (s.endsWith("-" + ov)) return { prefix: s.slice(0, -ov.length-1), suffix: ov };
+    return { prefix: s, suffix: ov };
   }
-
-  if (idxCandidate !== -1) {
-    // Erwartet: direkt danach kommt ein '-' als Trenner zum Suffix
-    if (s.charAt(idxCandidate) === '-') {
-      return { prefix: s.slice(0, idxCandidate), suffix: s.slice(idxCandidate + 1) };
-    }
-    // Falls kein '-' folgt (unerwartet): Fallback auf einfachen Split
-  }
-
-  // Kein valider [n]-Anker mit folgendem Suffix → Fallback: letzter Bindestrich trennt
-  var idx = s.lastIndexOf("-");
-  if (idx < 0) return { prefix: s, suffix: "" };
-  return { prefix: s.slice(0, idx), suffix: s.slice(idx + 1) };
+  return splitNameAuto(s);
 }
 function joinName(prefix, suffix){
   prefix = String(prefix||""); suffix = String(suffix||"");
   return suffix ? (prefix + "-" + suffix) : prefix;
 }
-
 // --- Preset-Tabelle: Name-Stack Renderer ---
 function renderNameStackNode(fullName, opts){
   opts = opts || {};
@@ -1128,6 +1215,7 @@ function deleteDeviceByName(deviceName){
     var nameEl = dev.querySelector("name");
     if (!nameEl) { nameEl = doc.createElement("name"); dev.insertBefore(nameEl, dev.firstChild); }
     nameEl.textContent = newName;
+    try { moveSuffixOverride && moveSuffixOverride(oldName, newName); } catch(_) {}
 
     // RX-Subscriptions umbiegen
     var rxEls = Array.prototype.slice.call(doc.getElementsByTagName("rxchannel"));
@@ -1147,6 +1235,11 @@ function deleteDeviceByName(deviceName){
     // UI neu aufbauen
     if (typeof fillPresetTable === "function") fillPresetTable(doc);
   }
+  try {
+      if (typeof decoratePresetTableNames === "function") {
+        decoratePresetTableNames();
+      }
+    } catch (_) {}
 
 
 // ===== Replace-Device: Helpers =====
@@ -1647,12 +1740,13 @@ if (renameChecked) {
   var inpFull   = document.getElementById("dsFull");
   var inpSuffix = document.getElementById("dsSuffix");
   var btnTake   = document.getElementById("dsTakeSelection");
+  var btnReset  = document.getElementById("dsReset");
   var btnSave   = document.getElementById("dsSave");
   var prev      = document.getElementById("dsPreview");
   var btnClose1 = modal.querySelector("[data-role='ds-close']");
   var btnClose2 = modal.querySelector("[data-role='ds-cancel']");
 
-  var ctx = { oldFull: "", basePrefix: "" };
+  var ctx = { oldFull: "", basePrefix: "", isAuto: false };
 
   function updatePreview(){
     var suf = (inpSuffix.value || "").trim();
@@ -1660,7 +1754,8 @@ if (renameChecked) {
     prev.textContent = full;
   }
 
-  btnTake.addEventListener("click", function(){
+  // Auswahl übernehmen → manueller Modus
+  if (btnTake) btnTake.addEventListener("click", function(){
     var s = getSelectionInInput(inpFull);
     var full = inpFull.value || "";
     var sel = (s.text || "").trim();
@@ -1668,28 +1763,34 @@ if (renameChecked) {
     if (!sel) { alert("Bitte am Ende des Namens den Suffix markieren."); return; }
     if (!full.endsWith(sel)) { alert("Die Auswahl muss am Ende des Namens stehen."); return; }
 
-    // führenden '-' bei der Auswahl entfernen
-    var suffix = sel.replace(/^-/,"");
-    // Prefix ist der Rest VOR der Auswahl; ein evtl. verbleibendes trailing '-' am Prefix entfernen
+    var suffix = sel.replace(/^-/, "");
     var prefRaw = full.slice(0, full.length - sel.length);
-    var basePref = prefRaw.replace(/-$/,"");
+    var basePref = prefRaw.replace(/-$/, "");
 
     ctx.basePrefix = basePref;
+    ctx.isAuto = false;
     inpSuffix.value = suffix;
     updatePreview();
   });
 
-  [inpSuffix].forEach(function(el){
-    el.addEventListener("input", updatePreview);
+  if (inpSuffix) inpSuffix.addEventListener("input", function(){ ctx.isAuto = false; updatePreview(); });
+
+  // Reset → automatische Erkennung (ohne Overrides)
+  if (btnReset) btnReset.addEventListener("click", function(){
+    var parts = (typeof splitNameAuto === "function") ? splitNameAuto(ctx.oldFull) : splitName(ctx.oldFull);
+    ctx.basePrefix = parts.prefix || "";
+    inpSuffix.value = parts.suffix || "";
+    ctx.isAuto = true;
+    updatePreview();
   });
 
   function open(fullName){
     ctx.oldFull = String(fullName || "");
-    // Default-Vorschlag aus splitName
-    var parts = splitName(ctx.oldFull);
+    var parts = splitName(ctx.oldFull); // override-aware
     ctx.basePrefix = parts.prefix || "";
     inpFull.value = ctx.oldFull;
     inpSuffix.value = parts.suffix || "";
+    ctx.isAuto = (typeof getSuffixOverride === "function") ? !getSuffixOverride(ctx.oldFull) : true;
     updatePreview();
     modal.style.display = "flex";
   }
@@ -1701,18 +1802,29 @@ if (renameChecked) {
   if (btnClose1) btnClose1.addEventListener("click", close);
   if (btnClose2) btnClose2.addEventListener("click", close);
 
-  btnSave.addEventListener("click", function(){
+  if (btnSave) btnSave.addEventListener("click", function(){
     var newFull = prev.textContent || "";
     if (!newFull || newFull === ctx.oldFull){ close(); return; }
-    // Umbenennen im Preset inkl. RX-Subs
+
+    // Rename im Preset
     renameDeviceInPreset(ctx.oldFull, newFull);
+
+    // Overrides persistieren/entfernen
+    try {
+      if (ctx.isAuto) {
+        clearSuffixOverride && clearSuffixOverride(ctx.oldFull);
+        clearSuffixOverride && clearSuffixOverride(newFull);
+      } else {
+        setSuffixOverride && setSuffixOverride(newFull, (inpSuffix.value||"").trim());
+        if (newFull !== ctx.oldFull) { clearSuffixOverride && clearSuffixOverride(ctx.oldFull); }
+      }
+    } catch(_){}
+
     close();
   });
 
-  // Expose
   window.openDefineSuffixDialog = open;
 })();
-
 
 (function bindExport(){
   var be = $("#btnExport"); if(!be) return;
@@ -1998,8 +2110,12 @@ document.addEventListener("visibilitychange", function() {
     var id = getModelIdFromDT(ev);
     if(!id) return;
     ev.preventDefault();
-    spawnModelFromLibById(id);
-  });
+(
+  (typeof window.__invokeSpawnModel === 'function') ? window.__invokeSpawnModel
+  : (typeof window.spawnModelFromLibById === 'function') ? window.spawnModelFromLibById
+  : (typeof spawnModelFromLibById === 'function') ? spawnModelFromLibById
+  : function(mid){ alert('Aktion nicht verfügbar: spawnModelFromLibById fehlt.'); }
+)(id);  });
 })();
 
 // --- Device-Library → Drop auf Preset-Tabelle ---
