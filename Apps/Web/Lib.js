@@ -809,6 +809,24 @@ function renderSidebarInto(container) {
     });
   }
 
+  // --- Public helpers for external callers (Script.js expects these) ---
+  function removeById(id) {
+    const list = load();
+    const idx = list.findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      save(list);
+      try { requestRenderSidebar(); } catch(_) {}
+    }
+  }
+
+  // Save a full list coming from outside (fallback path in Script.js)
+  function saveModels(list) {
+    save(Array.isArray(list) ? list : []);
+    try { requestRenderSidebar(); } catch(_) {}
+  }
+
+
   // ===== Edit/Delete Modal =====
   // (Hinweis: Für das Edit-Modal haben wir bereits Vendor/Model/Pattern/Counts/Labels/Notes.
   //  Wenn du die neuen Felder (serial/mac/...) & model_params dort editierbar haben willst,
@@ -909,7 +927,8 @@ return {
   makeDeviceXml,
   getNamePattern,
   listModels: function(){ return load().slice(); },
-  // NEU: Edit-Dialog öffentlich machen
+  removeById,          // <-- neu
+  saveModels,          // <-- neu
   openEditModal
 };
 
@@ -1091,9 +1110,11 @@ function toListItem(d, present){
   const title = p.suffix ? (p.prefix + "-") : p.prefix;
   const sub   = p.suffix || "";
   const presentCls = present ? " is-present" : "";
+  const dragAttr = present ? "" : ' draggable="true"';
+  const plusDisabled = present ? ' disabled aria-disabled="true" title="Bereits im Preset"' : ' title="Einfügen"';
 
   return (
-    `<div class="lib-item${presentCls}" draggable="true" data-role="devlib-item" data-id="${d.id}">
+    `<div class="lib-item${presentCls}"${dragAttr} data-role="devlib-item" data-id="${d.id}">
       <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
         <div>
           <strong>${escapeHtml(title)}</strong>${sub?("<br><span class='muted'>"+escapeHtml(sub)+"</span>"):""}
@@ -1102,7 +1123,7 @@ function toListItem(d, present){
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
-          <button class="btn btn-plus" data-role="devlib-spawn" data-id="${d.id}" title="Einfügen">+</button>
+          <button class="btn btn-plus" data-role="devlib-spawn" data-id="${d.id}"${plusDisabled}>+</button>
           <div class="menu">
             <button class="btn menu-toggle" type="button" title="Mehr">⋯</button>
             <div class="menu-list">
@@ -1114,8 +1135,7 @@ function toListItem(d, present){
       </div>
     </div>`
   );
-}
-  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+}  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function renderSidebarList(container, xmlDoc){
   const el = (typeof container==="string") ? document.querySelector(container) : container;

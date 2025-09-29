@@ -298,16 +298,18 @@ function setTimestamp(ts){
   });
 
   // Dragstart (separat, NICHT im Click-Handler!)
-  host.addEventListener("dragstart", function(ev){
-    var item = ev.target.closest('[data-role="devlib-item"]');
-    if(!item) return;
-    var id = item.dataset.id;
-    try{
-      ev.dataTransfer.setData("application/x-da-devlib-id", id);
-      ev.dataTransfer.setData("text/plain", "DEVLIB:" + id); // Fallback
-      ev.dataTransfer.effectAllowed = "copy";
-    }catch(_){}
-  }, true);
+host.addEventListener("dragstart", function(ev){
+  var item = ev.target.closest('[data-role="devlib-item"]');
+  if(!item) return;
+  // Bereits im Preset? → Drag unterbinden, Menü bleibt nutzbar
+  if (item.classList.contains('is-present')) { ev.preventDefault(); return; }
+  var id = item.dataset.id;
+  try{
+    ev.dataTransfer.setData("application/x-da-devlib-id", id);
+    ev.dataTransfer.setData("text/plain", "DEVLIB:" + id); // Fallback
+    ev.dataTransfer.effectAllowed = "copy";
+  }catch(_){}
+}, true);
 })();
 
 // --- Model Sidebar Actions (Delegation) ---
@@ -1997,6 +1999,50 @@ document.addEventListener("visibilitychange", function() {
     if(!id) return;
     ev.preventDefault();
     spawnModelFromLibById(id);
+  });
+})();
+
+// --- Device-Library → Drop auf Preset-Tabelle ---
+(function bindDevLibDropZone(){
+  var table = document.getElementById("presetTable");
+  if(!table) return;
+
+  function isDevDrag(ev){
+    try{
+      var types = ev.dataTransfer && ev.dataTransfer.types ? Array.from(ev.dataTransfer.types) : [];
+      return types.includes("application/x-da-devlib-id") || types.includes("text/plain");
+    }catch(_){}
+    return false;
+  }
+  function getDevIdFromDT(ev){
+    var id = "";
+    try { id = ev.dataTransfer.getData("application/x-da-devlib-id") || ""; } catch(_){}
+    if(!id){
+      try {
+        var t = ev.dataTransfer.getData("text/plain") || "";
+        if (t.indexOf("DEVLIB:") === 0) id = t.slice(7);
+      } catch(_){}
+    }
+    return id;
+  }
+
+  table.addEventListener("dragover", function(ev){
+    if (isDevDrag(ev)){
+      ev.preventDefault();
+      table.classList.add("drop-target");
+      try { ev.dataTransfer.dropEffect = "copy"; } catch(_){}
+    }
+  });
+  ["dragleave","dragend"].forEach(function(evt){
+    table.addEventListener(evt, function(){ table.classList.remove("drop-target"); });
+  });
+  table.addEventListener("drop", function(ev){
+    table.classList.remove("drop-target");
+    var id = getDevIdFromDT(ev);
+    if(!id) return;
+    ev.preventDefault();
+    // zentrale Funktion (inkl. Duplikat-Check)
+    spawnDeviceFromDevLibById(id);
   });
 })();
 

@@ -180,11 +180,18 @@ body.with-right-sidebar .main{ margin-right:320px; }
 .lib-item .menu .menu-item { display: block; width: 100%; text-align: left; }
 
 /* Ausgrauen von bereits im Preset vorhandenen Devices */
-.lib-item.is-present {
-  opacity: .45; pointer-events: none;
+.lib-item.is-present > div > div:first-child {
+  opacity: .45;
 }
-.lib-item.is-present .badge { opacity: 1; } /* falls du Badges verwendest */
-
+.lib-item.is-present .btn-plus {
+  pointer-events: none;
+  opacity: .6;
+  cursor: not-allowed;
+}
+/* Menü-Button (⋯) bleibt voll sichtbar */
+.lib-item.is-present .menu .menu-toggle {
+  opacity: 1;
+}
 /* === Dante Interface Selector === */
 #ifaceSelect {
   margin-bottom: 10px;
