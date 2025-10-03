@@ -30,7 +30,74 @@ var paintVisitedRows = null; // Set von "rdi:rid" -> pro RX nur 1x anwenden
 // --------- Helpers ----------
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
-function norm(s){ return (s||"").toLowerCase(); }
+function norm(s){
+  // robuste Normalisierung:
+  // - toLower, trim, Spaces kollabieren
+  // - NFD + Diakritika entfernen
+  // - Umlaute: ä/ö/ü→ae/oe/ue, ß→ss
+  var x = (s == null) ? "" : String(s);
+  try { x = x.normalize('NFD'); } catch(_){}
+  x = x.toLowerCase()
+       .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+       .replace(/ß/g, 'ss')
+       .replace(/[\u0300-\u036f]/g, '')  // diakritische Zeichen
+       .replace(/\s+/g, ' ')
+       .trim();
+  return x;
+}
+
+// Eingabe → Tokenliste (UND-Verknüpfung)
+function tokensOf(s){
+  // Ergebnis: Array von Gruppen (UND). Jede Gruppe ist ein Array von Alternativen (ODER).
+  // Beispiel: "mic in|input out##"
+  // → [ ["mic"], ["in","input"], ["out##"] ]
+  var n = norm(s);
+  if (!n) return [];
+  return n.split(' ').filter(Boolean).map(function(group){
+    return group.split('|').filter(Boolean);
+  });
+}
+// Prüft: alle tokens kommen in mindestens einem Feld (teilweise) vor
+function compileTokenToRegex(t){
+  // Wir bekommen t bereits "norm()"alisiert.
+  // 1) Platzhalter vorm Escapen einsetzen
+  //    ** / *** / ....  → __AST{n}__
+  t = t.replace(/(\*{2,})/g, (m)=>`__AST${m.length}__`);
+  //    * → __STAR__
+  t = t.replace(/\*/g, '__STAR__');
+  //    # / ## / ### ... → __HASH{n}__
+  t = t.replace(/(#{1,})/g, (m)=>`__HASH${m.length}__`);
+
+  // 2) Rest escapen (RegEx-Meta)
+  t = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 3) Platzhalter zurück in RegEx übersetzen
+  t = t
+    .replace(/__AST(\d+)__/g, (_,n)=>`.{${n}}`)   // exakt n beliebige Zeichen
+    .replace(/__STAR__/g, '.*')                   // beliebig viele Zeichen
+    .replace(/__HASH(\d+)__/g, (_,n)=>`\\d{${n}}`); // exakt n Ziffern
+
+  // un-anchored: Teilstring-Match
+  return new RegExp(t);
+}
+
+// Prüft: alle tokens müssen in mind. einem Feld matchen (Teilstring)
+function fieldsMatchTokens(fields, tokenGroups){
+  // tokenGroups: Array< Array<string> >
+  // AND über Gruppen, OR über Alternativen je Gruppe, OR über Felder
+  if (!tokenGroups || tokenGroups.length === 0) return true;
+
+  var nf = fields.map(norm);
+
+  return tokenGroups.every(function(group){
+    // min. eine Alternative der Gruppe muss in mind. einem Feld matchen
+    var regs = group.map(compileTokenToRegex);
+    return regs.some(function(rx){
+      return nf.some(function(f){ return rx.test(f); });
+    });
+  });
+}
+
 function colKey(devIndex, chanId){ return chanId ? ("tx:"+devIndex+":"+chanId) : ("txdev:"+devIndex); }
 function rowKey(devIndex, chanId){ return chanId ? ("rx:"+devIndex+":"+chanId) : ("rxdev:"+devIndex); }
 
@@ -177,50 +244,76 @@ function buildModel(){
 
 // --------- Sichtbarkeitsbasis + Freeze ----------
 function computeVisibleBase(){
-  var fTx = norm( $("#fTx") ? $("#fTx").value : "" );
-  var fRx = norm( $("#fRx") ? $("#fRx").value : "" );
+  var tTx = tokensOf( $("#fTx") ? $("#fTx").value : "" );
+  var tRx = tokensOf( $("#fRx") ? $("#fRx").value : "" );
+
 
   function deviceMatchesTx(dev){
-    if(!fTx) return true;
-    if(norm(dev.name).indexOf(fTx) >= 0) return true;
-    for(var i=0;i<dev.tx.length;i++){
-      if(norm(dev.tx[i].label).indexOf(fTx) >= 0) return true;
-    }
-    return false;
-  }
-  function deviceMatchesRx(dev){
-    if(!fRx) return true;
-    if(norm(dev.name).indexOf(fRx) >= 0) return true;
-    for(var i=0;i<dev.rx.length;i++){
-      if(norm(dev.rx[i].name).indexOf(fRx) >= 0) return true;
-    }
-    return false;
+    // Felder: Gerätename + alle TX-Labels
+    var fields = [dev.name];
+    for (var i=0; i<dev.tx.length; i++) { fields.push(dev.tx[i].label); }
+    return fieldsMatchTokens(fields, tTx);
   }
 
-  var visCols = [];
+  function deviceMatchesRx(dev){
+    // Felder: Gerätename + alle RX-Namen
+    var fields = [dev.name];
+    for (var i=0; i<dev.rx.length; i++) { fields.push(dev.rx[i].name); }
+    return fieldsMatchTokens(fields, tRx);
+  }
+  
+ var visCols = [];
   devices.forEach(function(d, di){
-    if(!deviceMatchesTx(d)) return;
-    if(collapsedTx[di]) {
+    var devNameMatchTx = fieldsMatchTokens([d.name], tTx);
+
+    // Kanal-Selektion (wenn kein Dev-Treffer)
+    var txList;
+    if (!tTx.length || devNameMatchTx) {
+      txList = d.tx.slice();
+    } else {
+      txList = d.tx.filter(function(tx){
+        // nur Kanal-Label prüfen (Gerätename traf ja nicht)
+        return fieldsMatchTokens([tx.label], tTx);
+      });
+    }
+
+    // nichts passt → Gerät ausblenden
+    if (txList.length === 0 && !devNameMatchTx) return;
+
+    if (collapsedTx[di]) {
+      // collapsed: Kopf zeigen, wenn Gerät matcht ODER mind. ein Kanal passt
       visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
     } else {
-      d.tx.forEach(function(tx){
+      txList.forEach(function(tx){
         visCols.push({ dev:d, devIndex: di, isDevice:false, tx:tx });
       });
     }
   });
 
-  var visRows = [];
+var visRows = [];
   devices.forEach(function(d, di){
-    if(!deviceMatchesRx(d)) return;
-    if(collapsedRx[di]) {
+    var devNameMatchRx = fieldsMatchTokens([d.name], tRx);
+
+    // Kanal-Selektion (wenn kein Dev-Treffer)
+    var rxList;
+    if (!tRx.length || devNameMatchRx) {
+      rxList = d.rx.slice();
+    } else {
+      rxList = d.rx.filter(function(rx){
+        return fieldsMatchTokens([rx.name], tRx);
+      });
+    }
+
+    if (rxList.length === 0 && !devNameMatchRx) return;
+
+    if (collapsedRx[di]) {
       visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
     } else {
-      d.rx.forEach(function(rx){
+      rxList.forEach(function(rx){
         visRows.push({ dev:d, devIndex: di, isDevice:false, rx:rx });
       });
     }
   });
-
   return { visCols: visCols, visRows: visRows };
 }
 
@@ -745,38 +838,59 @@ function bindUI(){
 
   var chkRows = $("#onlyRowsWithSubs");
   var chkCols = $("#onlyColsWithSubs");
-  if(chkRows){
-    chkRows.addEventListener("change", function(e){
-      if(e.target.checked){
-        var base = computeVisibleBase();
-        base.visRows = base.visRows.filter(function(r){ if(r.isDevice) return true; return !!(r.rx.subDev); });
-        freezeVisible(base);
-      } else { frozenRows = null; }
-      renderMatrix();
-    });
-  }
-  if(chkCols){
-    chkCols.addEventListener("change", function(e){
-      if(e.target.checked){
-        var base = computeVisibleBase();
-        var used = new Set();
-        base.visRows.forEach(function(r){
-          if(r.isDevice) return;
-          var sd = r.rx.subDev, sc = r.rx.subChan;
-          if(!sd || !sc) return;
-          base.visCols.forEach(function(c){
-            if(c.isDevice) return;
-            if(c.dev.name === sd && c.tx.label === sc){
-              used.add(colKey(c.devIndex, c.tx.id));
-            }
-          });
+if (chkRows) {
+  chkRows.addEventListener("change", function (e) {
+    if (e.target.checked) {
+      // Basis nach aktuellem Textfilter/Collapse
+      var base = computeVisibleBase();
+      // nur RX-Zeilen mit Subscription (Geräte-Zeilen bleiben)
+      var setR = new Set();
+      base.visRows.forEach(function (r) {
+        if (r.isDevice) {
+          setR.add(rowKey(r.devIndex, null));
+        } else if (r.rx && r.rx.subDev) {
+          setR.add(rowKey(r.devIndex, r.rx.id));
+        }
+      });
+      // nur Rows einfrieren – Cols unberührt lassen
+      frozenRows = setR;
+    } else {
+      frozenRows = null;
+    }
+    renderMatrix();
+  });
+}
+
+if (chkCols) {
+  chkCols.addEventListener("change", function (e) {
+    if (e.target.checked) {
+      var base = computeVisibleBase();
+      // ermitteln, welche TX-Spalten überhaupt benutzt werden
+      var used = new Set();
+      base.visRows.forEach(function (r) {
+        if (r.isDevice) return;
+        var sd = r.rx.subDev, sc = r.rx.subChan;
+        if (!sd || !sc) return;
+        base.visCols.forEach(function (c) {
+          if (c.isDevice) return;
+          if (c.dev.name === sd && c.tx.label === sc) {
+            used.add(colKey(c.devIndex, c.tx.id));
+          }
         });
-        base.visCols = base.visCols.filter(function(c){ return c.isDevice || used.has(colKey(c.devIndex, c.tx.id)); });
-        freezeVisible(base);
-      } else { frozenCols = null; }
-      renderMatrix();
-    });
-  }
+      });
+      // nur Cols einfrieren – Rows unberührt lassen
+      var setC = new Set();
+      base.visCols.forEach(function (c) {
+        var key = colKey(c.devIndex, c.isDevice ? null : (c.tx && c.tx.id));
+        if (c.isDevice || used.has(colKey(c.devIndex, c.tx.id))) setC.add(key);
+      });
+      frozenCols = setC;
+    } else {
+      frozenCols = null;
+    }
+    renderMatrix();
+  });
+}
 
   // Speichern & zurück
   var back = $("#btnSaveBack");
