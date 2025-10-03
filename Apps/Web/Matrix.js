@@ -26,8 +26,69 @@ var frozenRows = null;
 var isPainting = false;      // aktiv beim gedrückten Ziehen
 var paintMode = null;        // "add" | "erase"
 var paintVisitedRows = null; // Set von "rdi:rid" -> pro RX nur 1x anwenden
+var isOrthoPaint = false;               // rechte Maustaste = Orthogonal-Modus
+var orthoStart = null;                  // { rdi,rid,tdi,tid }
+var orthoLastHover = null;              // letztes td im RMB-Modus
+
+// --- Ortho (One-Shot) & Long-Press (Touch) ---
+var isOrthoArmed = false;         // einmaliger Ortho-Malvorgang „scharf“
+var orthoBadgeEl = null;          // visuelles Feedback
+var lpTimer = null;               // long-press timer (touch)
+var lpFired = false;
+var LP_MS = 350;
+var pendingStart = null;            // Startzelle, falls Ortho erst per Long-Press kommt
+
+function setOrthoUI(on){
+  var btn = document.getElementById('btnOrthoOnce');
+  var wrapEl = $("#matrixWrap");
+  if (on) {
+    if (wrapEl) wrapEl.classList.add("ortho-active");
+    if (btn) btn.classList.add('active');
+  } else {
+    if (wrapEl) wrapEl.classList.remove("ortho-active");
+    if (btn) btn.classList.remove('active');
+  }
+}
+
+function armOrthoOnce(){
+  isOrthoArmed = true;
+  setOrthoUI(true);
+  // Mid-gesture Upgrade: wenn bereits Painting läuft, aber Ortho noch nicht aktiv,
+  // übernehme die gemerkte Startzelle als orthoStart.
+  if (isPainting && !isOrthoPaint && pendingStart){
+    isOrthoPaint = true;
+    orthoStart = {
+      rdi: pendingStart.rdi, rid: pendingStart.rid,
+      tdi: pendingStart.tdi, tid: pendingStart.tid
+    };
+    var wrapEl = $("#matrixWrap");
+    if (wrapEl) wrapEl.classList.add("painting");
+  }
+}
+
+function disarmOrtho(){
+  isOrthoArmed = false;
+  setOrthoUI(false);
+}
+
+// Kontextmenü während RMB-Painting unterdrücken
+document.addEventListener("contextmenu", function(e){
+  if (isOrthoPaint) { e.preventDefault(); }
+}, true);
 
 // --------- Helpers ----------
+
+// Index-Suche
+function rxIndexOf(dev, rxId){ 
+  var a = dev && dev.rx || []; 
+  for (var i=0;i<a.length;i++){ if(String(a[i].id)===String(rxId)) return i; } 
+  return -1; 
+}
+function txIndexOf(dev, txId){ 
+  var a = dev && dev.tx || []; 
+  for (var i=0;i<a.length;i++){ if(String(a[i].id)===String(txId)) return i; } 
+  return -1; 
+}
 
 // --- Enable-Prompts & Preferences ---
 var PREF_ENABLE_ON_CLICK_SUBS  = "DA_PREF_ENABLE_ON_CLICK_SUBS";
@@ -529,6 +590,33 @@ function renderMatrix(){
     tr1.appendChild(thc);
   }
   thead.appendChild(tr1);
+  
+// --- Ortho-Button in die linke obere Ecke setzen (Eckfeld der Matrix) ---
+(function ensureCornerOrthoButton(){
+  // Wir zielen auf die erste Zelle der zweiten Kopfzeile (leeres Eckfeld)
+  var corner = tr1.querySelector('th.rowhead');
+  if (!corner) return;
+
+  // Falls bereits vorhanden (bei erneutem render), nichts doppelt einfügen
+  if (corner.querySelector('#btnOrthoOnce')) return;
+
+  var b = document.createElement('button');
+  b.id = 'btnOrthoOnce';
+  b.type = 'button';
+  b.className = 'ortho-btn';
+  b.title = 'Orthogonal zeichnen (einmal)';
+
+  // selbsterklärendes Icon: L-Form + Rahmen (Orthogonal)
+b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+            +   '<rect x="3" y="3" width="18" height="18" rx="3" ry="3" fill="currentColor" opacity="0.2"></rect>'
+            +   '<path d="M6 6 H18 M6 6 V18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>'
+            +   '<path d="M6 6 L18 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>'
+            + '</svg>';
+  b.addEventListener('click', function(){ armOrthoOnce(); });
+  if (!corner.style.position) corner.style.position = 'relative';
+  corner.appendChild(b);
+})();
+
 
   // ----- Tabellenkörper -----
   for(var r=0; r<visRows.length; r++){
@@ -691,98 +779,324 @@ function renderMatrix(){
     }
   };
 
-  // ----- Drag-to-Subscribe („Malen“) -----
-  var wrapEl = $("#matrixWrap");
+// Pointer Long-Press → Ortho (einmal)  (funktioniert für Touch, Stift und Maus)
+tbodyEl.addEventListener('pointerdown', function(ev){
+  // nur innerhalb einer Matrix-Zelle sinnvoll
+  var td = ev.target && ev.target.closest ? ev.target.closest('td') : null;
+  if (!td || td.dataset.role !== 'cell') return;
 
-  // mousedown: Start Painting
- tbodyEl.onmousedown = function(ev){
-    var td = ev.target && ev.target.closest ? ev.target.closest("td") : null;
+  // Long-Press scharf schalten
+  lpFired = false;
+  clearTimeout(lpTimer);
+  lpTimer = setTimeout(function(){
+    lpFired = true;
+    armOrthoOnce();                    // One-Shot aktivieren + Badge
+    if (navigator && navigator.vibrate) { try { navigator.vibrate(10); } catch(_){} }
+  }, LP_MS);
+}, {passive:true});
 
-    // Wenn Patchen aus ist → Dialog anbieten (nur bei Klick in Zellenbereich)
-    if (!editSubsEnabled){
-      if (td && td.dataset && td.dataset.role === "cell"){
-        var tSubs = $("#toggleSubs");
-        var enableNow = function(){
-          if (tSubs) tSubs.checked = true;
-          editSubsEnabled = true;
-          renderMatrix();
-        };
-        var enableRemember = function(){
-          prefSetBool(PREF_ENABLE_ON_CLICK_SUBS, true);
-          enableNow();
-        };
-        showEnableDialog('subs', enableNow, enableRemember);
-      }
-      return;
+function clearPointerLP(){ clearTimeout(lpTimer); }
+tbodyEl.addEventListener('pointerup',     clearPointerLP, {passive:true});
+tbodyEl.addEventListener('pointercancel', clearPointerLP, {passive:true});
+tbodyEl.addEventListener('pointerleave',  clearPointerLP, {passive:true});
+
+// ----- Drag-to-Subscribe („Malen“) -----
+var wrapEl = $("#matrixWrap");
+
+// mousedown: Start Painting (LMB = normal, RMB = Orthogonal)
+tbodyEl.onmousedown = function(ev){
+  var td = ev.target && ev.target.closest ? ev.target.closest("td") : null;
+
+  // Wenn Patchen aus ist → Dialog anbieten (nur bei Klick im Zellenbereich)
+  if (!editSubsEnabled){
+    if (td && td.dataset && td.dataset.role === "cell"){
+      var tSubs = $("#toggleSubs");
+      var enableNow = function(){
+        if (tSubs) tSubs.checked = true;
+        editSubsEnabled = true;
+        renderMatrix();
+      };
+      var enableRemember = function(){
+        prefSetBool(PREF_ENABLE_ON_CLICK_SUBS, true);
+        enableNow();
+      };
+      showEnableDialog('subs', enableNow, enableRemember);
     }
+    return;
+  }
 
-    if (ev.button !== 0) return; // nur linke Maustaste
-    if (!td || td.dataset.role !== "cell") return;    if (!td.dataset.rxChanId || !td.dataset.txChanId) return;
+  if (!td || td.dataset.role !== "cell") return;
+  if (!td.dataset.rxChanId || !td.dataset.txChanId) return;
 
-    isPainting = true;
-    paintVisitedRows = new Set();
+  var rdi = parseInt(td.dataset.rxDevIndex, 10);
+  var rid = td.dataset.rxChanId;
+  var tdi = parseInt(td.dataset.txDevIndex, 10);
+  var tid = td.dataset.txChanId;
 
-    var rdi = parseInt(td.dataset.rxDevIndex, 10);
-    var rid = td.dataset.rxChanId;
-    var tdi = parseInt(td.dataset.txDevIndex, 10);
-    var tid = td.dataset.txChanId;
+  // Modus anhand Startzelle (wie bisher)
+  var rdev = devices[rdi];
+  var rx = (rdev && rdev.rx) ? rdev.rx.find(function(x){ return String(x.id)===String(rid); }) : null;
+  var txObj = (devices[tdi] && devices[tdi].tx) ? devices[tdi].tx.find(function(x){ return String(x.id)===String(tid); }) : null;
+  var already = !!(rx && txObj && rx.subDev === devices[tdi].name && rx.subChan === txObj.label);
+  paintMode = already ? "erase" : "add";
 
-    // Modus bestimmen anhand der Startzelle
-    var rdev = devices[rdi];
-    var rx = (rdev && rdev.rx) ? rdev.rx.find(function(x){ return String(x.id)===String(rid); }) : null;
-    var txObj = (devices[tdi] && devices[tdi].tx) ? devices[tdi].tx.find(function(x){ return String(x.id)===String(tid); }) : null;
-    var already = !!(rx && txObj && rx.subDev === devices[tdi].name && rx.subChan === txObj.label);
-    paintMode = already ? "erase" : "add";
+  isPainting = true;
+  paintVisitedRows = new Set();
+  orthoLastHover = null;
+  
+  // Ortho-Modus kommt nun von One-Shot (Button) ODER Long-Press (Touch)
+  isOrthoPaint = !!isOrthoArmed;
+  orthoStart = { rdi:rdi, rid:rid, tdi:tdi, tid:tid };
 
-    // Startzelle anwenden
-    var rowKeyMark = rdi + ":" + rid;
-    paintVisitedRows.add(rowKeyMark);
-    if (paintMode === "add"){
-      setRxSubscriptionRaw(rdi, rid, tdi, tid);
-    } else {
-      clearRxSubscriptionRaw(rdi, rid);
-    }
+  // Startzelle immer vormerken – wichtig, wenn Ortho erst per Long-Press kommt
+  pendingStart = { rdi:rdi, rid:rid, tdi:tdi, tid:tid };
 
+  // Touch / Pen: nicht sofort anwenden, da Long-Press evtl. gleich Ortho schaltet
+  var isTouchLike = (ev.pointerType === 'touch' || ev.pointerType === 'pen');
+  // (Falls pointerType nicht vorhanden, bleibt isTouchLike === false)
+
+ if (isOrthoPaint){
+    // Ortho sofort „armed“ (Button / bereits ausgelöster Long-Press)
     if (wrapEl) wrapEl.classList.add("painting");
     td.classList.add("painting-hover");
     ev.preventDefault();
-  };
+    return;
+  }
 
-  // mouseover: während Painting anwenden
-  tbodyEl.onmouseover = function(ev){
-    if (!isPainting) return;
-    var td = ev.target.closest("td");
-    if (!td || td.dataset.role !== "cell") return;
+  if (isTouchLike){
+    // Bei Touch: noch NICHT anwenden – warte auf Long-Press oder MouseUp
+    if (wrapEl) wrapEl.classList.add("painting");
+    td.classList.add("painting-hover");
+    ev.preventDefault();
+    return;
+  }
 
-    var rdi = parseInt(td.dataset.rxDevIndex, 10);
-    var rid = td.dataset.rxChanId;
-    var tdi = parseInt(td.dataset.txDevIndex, 10);
-    var tid = td.dataset.txChanId;
-    if (!rid || !tid) return;
+  // Desktop/LMB Normal: Startzelle sofort anwenden
+  var rowKeyMark = rdi + ":" + rid;
+  paintVisitedRows.add(rowKeyMark);
+  if (paintMode === "add"){
+    setRxSubscriptionRaw(rdi, rid, tdi, tid);
+  } else {
+    clearRxSubscriptionRaw(rdi, rid);
+  }
+  if (wrapEl) wrapEl.classList.add("painting");
+  td.classList.add("painting-hover");
+  ev.preventDefault();
+};
 
+// mouseover: während Painting anwenden
+tbodyEl.onmouseover = function(ev){
+  if (!isPainting) return;
+  var td = ev.target && ev.target.closest ? ev.target.closest("td") : null;
+  if (!td || td.dataset.role !== "cell") return;
+
+  var rdi = parseInt(td.dataset.rxDevIndex, 10);
+  var rid = td.dataset.rxChanId;
+  var tdi = parseInt(td.dataset.txDevIndex, 10);
+  var tid = td.dataset.txChanId;
+  if (!rid || !tid) return;
+
+  if (!isOrthoPaint){
+    // Normal (LMB): pro RX-Reihe nur einmal
     var mark = rdi + ":" + rid;
     if (paintVisitedRows.has(mark)) return;
     paintVisitedRows.add(mark);
-
     if (paintMode === "add"){
       setRxSubscriptionRaw(rdi, rid, tdi, tid);
     } else {
       clearRxSubscriptionRaw(rdi, rid);
     }
-
     td.classList.add("painting-hover");
-  };
+    return;
+  }
 
-  // mouseup: Painting beenden, einmal rendern & persistieren
-  document.onmouseup = function(){
-    if (!isPainting) return;
-    isPainting = false;
-    paintMode = null;
-    paintVisitedRows = null;
-    if (wrapEl) wrapEl.classList.remove("painting");
-    renderMatrix();
-    persist();
-  };
+  // Orthogonal (RMB):
+  // Erlaubte Richtungen:
+  // 1) Vertikal: gleiches TX (tdi,tid) wie Start -> alle berührten RX bekommen START-TX
+  // 2) Diagonal: RX & TX ändern sich gleichzeitig -> jeweils aktuelle Zelle wird gesetzt
+  // 3) Horizontal: gleiche RX wie Start -> während Drag NICHT anwenden (nur Endpunkt bei mouseup)
+  var sameCol = (tdi===orthoStart.tdi && String(tid)===String(orthoStart.tid));
+  var sameRow = (rdi===orthoStart.rdi && String(rid)===String(orthoStart.rid));
+
+  // Horizontal -> ignorieren (Endpunkt wird in mouseup behandelt)
+  if (sameRow && !sameCol){
+    orthoLastHover = td;
+    td.classList.add("painting-hover");
+    return;
+  }
+
+  var inPairing = (rdi === orthoStart.rdi) && (tdi === orthoStart.tdi);
+  if (!inPairing){
+    orthoLastHover = td; // für evtl. Endpunktanzeige ohne Aktion
+    td.classList.add("painting-hover");
+    return;
+  }
+
+  // Vertikal (gleiche Spalte): setze START-TX auf jede neue RX-Zeile
+  if (sameCol && !sameRow){
+    var m1 = rdi + ":" + rid;
+    if (!paintVisitedRows.has(m1)){
+      paintVisitedRows.add(m1);
+      if (paintMode === "add"){
+        setRxSubscriptionRaw(rdi, rid, orthoStart.tdi, orthoStart.tid);
+      } else {
+        clearRxSubscriptionRaw(rdi, rid);
+      }
+    }
+    orthoLastHover = td;
+    td.classList.add("painting-hover");
+    return;
+  }
+
+  // Diagonal innerhalb der Paarung (RX & TX-Kanal ändern sich, Geräte bleiben)
+  if (!sameCol && !sameRow){
+    var m2 = rdi + ":" + rid;
+    if (!paintVisitedRows.has(m2)){
+      paintVisitedRows.add(m2);
+      if (paintMode === "add"){
+        setRxSubscriptionRaw(rdi, rid, tdi, tid);
+      } else {
+        clearRxSubscriptionRaw(rdi, rid);
+      }
+    }
+    orthoLastHover = td;
+    td.classList.add("painting-hover");
+    return;
+  }
+};
+
+// mouseup: Painting beenden, bei RMB ggf. Endpunkt (Horizontal) anwenden
+document.onmouseup = function(){
+  if (!isPainting) return;
+
+  if (isOrthoPaint && orthoStart){
+    var startRDev = devices[orthoStart.rdi];
+    var startTDev = devices[orthoStart.tdi];
+    if (startRDev && startTDev && orthoLastHover){
+      var endRdi = parseInt(orthoLastHover.dataset.rxDevIndex, 10);
+      var endRid = orthoLastHover.dataset.rxChanId;
+      var endTdi = parseInt(orthoLastHover.dataset.txDevIndex, 10);
+      var endTid = orthoLastHover.dataset.txChanId;
+
+      var sameRow = (endRdi===orthoStart.rdi && String(endRid)===String(orthoStart.rid));
+      var sameCol = (endTdi===orthoStart.tdi && String(endTid)===String(orthoStart.tid));
+
+      // **Paarungsgrenze**: innerhalb Start-RX-Gerät & Start-TX-Gerät bleiben
+      var inPairing = (endRdi===orthoStart.rdi) && (endTdi===orthoStart.tdi);
+
+      // Sichtbarkeit erfassen (nur aktuell angezeigte Kanäle berücksichtigen)
+      var base = computeVisibleBase();
+      var visRow = new Set();  // Schlüssel: "<rxDevIndex>:<rxId>"
+      var visCol = new Set();  // Schlüssel: "<txDevIndex>:<txId>"
+      base.visRows.forEach(function(r){
+        if (!r.isDevice && r.rx) visRow.add(r.devIndex + ":" + r.rx.id);
+      });
+      base.visCols.forEach(function(c){
+        if (!c.isDevice && c.tx) visCol.add(c.devIndex + ":" + c.tx.id);
+      });
+      function isVisibleRx(di, rid){ return visRow.has(di + ":" + rid); }
+      function isVisibleTx(di, tid){ return visCol.has(di + ":" + tid); }
+
+      // 1) HORIZONTAL: nur Endpunkt
+      if (sameRow && !sameCol){
+        if (endTdi === orthoStart.tdi){
+          // nur wenn RX-Endpunkt & TX-Endpunkt sichtbar sind
+          if (isVisibleRx(orthoStart.rdi, orthoStart.rid) && isVisibleTx(endTdi, endTid)){
+            if (paintMode === "add"){
+              setRxSubscriptionRaw(orthoStart.rdi, orthoStart.rid, endTdi, endTid);
+            } else {
+              clearRxSubscriptionRaw(orthoStart.rdi, orthoStart.rid);
+            }
+          }
+        }
+      }
+
+      // 2) VERTIKAL: gleiche Spalte → von Start bis Geräteende (Richtung des Zugs)
+      if (sameCol && !sameRow){
+        var aRx = startRDev.rx || [];
+        var sIdx = rxIndexOf(startRDev, orthoStart.rid);
+        var eIdx = rxIndexOf(startRDev, endRid);
+        if (sIdx >= 0 && eIdx >= 0){
+          var down = (eIdx > sIdx);
+          var first = 0, last = aRx.length - 1;
+          // bis zum Geräteende in Zugrichtung
+          var stop = down ? last : first;
+          var step = down ? 1 : -1;
+          for (var i = sIdx; i !== (stop + step); i += step){
+            var rid = aRx[i].id;
+            // nur sichtbare RX-Zeile & sichtbare Start-TX-Spalte
+            if (!isVisibleRx(orthoStart.rdi, rid) || !isVisibleTx(orthoStart.tdi, orthoStart.tid)) continue;
+
+            if (paintMode === "add"){
+              setRxSubscriptionRaw(orthoStart.rdi, rid, orthoStart.tdi, orthoStart.tid);
+            } else {
+              clearRxSubscriptionRaw(orthoStart.rdi, rid);
+            }
+          }
+        }
+      }
+
+      // 3) DIAGONAL: RX & TX wechseln → in Zugrichtung bis Geräteende beider Listen
+      if (!sameCol && !sameRow && inPairing){
+        var aRx2 = startRDev.rx || [];
+        var aTx2 = startTDev.tx || [];
+        var sR = rxIndexOf(startRDev, orthoStart.rid);
+        var sT = txIndexOf(startTDev, orthoStart.tid);
+        var eR = rxIndexOf(startRDev, endRid);
+        var eT = txIndexOf(startTDev, endTid);
+        if (sR>=0 && sT>=0 && eR>=0 && eT>=0){
+          var rDown = (eR > sR);
+          var tDown = (eT > sT);
+          // Nur „saubere“ Diagonale in gleiche Richtung; andernfalls ignoriere
+          if ((rDown && tDown) || (!rDown && !tDown)){
+            var rFirst = 0, rLast = aRx2.length - 1;
+            var tFirst = 0, tLast = aTx2.length - 1;
+            var rStop = rDown ? rLast : rFirst;
+            var tStop = tDown ? tLast : tFirst;
+            var rStep = rDown ? 1 : -1;
+            var tStep = tDown ? 1 : -1;
+
+            var r = sR, t = sT;
+            // bis zum Ende einer Liste – wer zuerst „zu Ende“ ist, begrenzt
+            while (true){
+              var rid = aRx2[r].id;
+              var tid = aTx2[t].id;
+
+              // nur wenn RX-Zeile & TX-Spalte aktuell sichtbar sind
+              if (isVisibleRx(orthoStart.rdi, rid) && isVisibleTx(orthoStart.tdi, tid)){
+                if (paintMode === "add"){
+                  setRxSubscriptionRaw(orthoStart.rdi, rid, orthoStart.tdi, tid);
+                } else {
+                  clearRxSubscriptionRaw(orthoStart.rdi, rid);
+                }
+              }
+
+              if (r === rStop || t === tStop) break;
+              r += rStep; t += tStep;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Cleanup & persist
+  isPainting = false;
+  isOrthoPaint = false;
+  paintMode = null;
+  paintVisitedRows = null;
+  orthoStart = null;
+  orthoLastHover = null;
+  pendingStart = null;   // << wichtig: aufräumen
+
+  // Ortho ist One-Shot
+  disarmOrtho();
+
+  var wrapEl = $("#matrixWrap");
+  if (wrapEl) wrapEl.classList.remove("painting");
+  renderMatrix();
+  persist();
+};
 }
 
 // --------- Edit-Helfer ----------
@@ -951,6 +1265,7 @@ var tSubs  = $("#toggleSubs");
       renderMatrix();
     });
   }
+
   ["fTx","fRx"].forEach(function(id){
     var el = $("#"+id); if(!el) return;
     el.addEventListener("input", function(){ renderMatrix(); });
