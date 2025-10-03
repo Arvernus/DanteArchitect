@@ -28,6 +28,65 @@ var paintMode = null;        // "add" | "erase"
 var paintVisitedRows = null; // Set von "rdi:rid" -> pro RX nur 1x anwenden
 
 // --------- Helpers ----------
+
+// --- Enable-Prompts & Preferences ---
+var PREF_ENABLE_ON_CLICK_SUBS  = "DA_PREF_ENABLE_ON_CLICK_SUBS";
+var PREF_ENABLE_ON_CLICK_NAMES = "DA_PREF_ENABLE_ON_CLICK_NAMES";
+
+function prefGetBool(key){
+  try { return localStorage.getItem(key) === "1"; } catch(_){ return false; }
+}
+function prefSetBool(key, val){
+  try { localStorage.setItem(key, val ? "1" : "0"); } catch(_){}
+}
+
+function showEnableDialog(kind, onEnable, onEnableRemember){
+  // kind: 'subs' | 'names'
+  var t = (kind === 'subs')
+    ? "Abonnements patchen ist aktuell deaktiviert."
+    : "Bearbeiten von Geräte-/Kanalnamen ist aktuell deaktiviert.";
+
+  var overlay = document.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(0,0,0,0.35)";
+  overlay.style.zIndex = "9999";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+
+  var box = document.createElement("div");
+  box.style.background = "#fff";
+  box.style.border = "1px solid #ccc";
+  box.style.borderRadius = "10px";
+  box.style.boxShadow = "0 8px 30px rgba(0,0,0,0.25)";
+  box.style.width = "min(460px, 92vw)";
+  box.style.padding = "16px";
+  box.style.fontFamily = "system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial";
+  box.innerHTML = [
+    '<h3 style="margin:0 0 8px 0; font-size:16px;">Aktion aktivieren?</h3>',
+    '<p style="margin:0 0 12px 0; font-size:13px; color:#444;">'+t+'</p>',
+    '<div style="display:flex; gap:8px; justify-content:flex-end;">',
+      '<button id="dlg-cancel"  class="btn" style="padding:6px 10px;">Abbrechen</button>',
+      '<button id="dlg-enable"  class="btn" style="padding:6px 10px; background:#2979ff; border:none; color:white; border-radius:6px;">Jetzt aktivieren</button>',
+      '<button id="dlg-remember" class="btn" style="padding:6px 10px; background:#01579b; border:none; color:white; border-radius:6px;">Aktivieren & merken</button>',
+    '</div>'
+  ].join("");
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function close(){ if(overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+  box.querySelector("#dlg-cancel").addEventListener("click", function(){ close(); });
+  box.querySelector("#dlg-enable").addEventListener("click", function(){
+    try{ onEnable && onEnable(); }finally{ close(); }
+  });
+  box.querySelector("#dlg-remember").addEventListener("click", function(){
+    try{ onEnableRemember && onEnableRemember(); }finally{ close(); }
+  });
+}
+
+
 function $(s){ return document.querySelector(s); }
 function cel(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
 function norm(s){
@@ -597,6 +656,34 @@ function renderMatrix(){
       }
     }
 
+    else {
+      // Wenn Bearbeiten aus ist, aber auf Name/Kanal geklickt wird → Dialog
+      var roles = ["dev-name-tx", "tx-chan", "dev-name-rx", "rx-chan", "dev-suffix-tx", "dev-suffix-rx"];
+      if (t.dataset && roles.indexOf(t.dataset.role) >= 0){
+        var tNames = $("#toggleNames");
+        var enableNow = function(){
+          if (tNames) tNames.checked = true;
+          editNamesEnabled = true;
+          renderMatrix();
+        };
+        var enableRemember = function(){
+          // beide Präferenzen dauerhaft setzen
+          prefSetBool(PREF_ENABLE_ON_CLICK_SUBS,  true);
+          prefSetBool(PREF_ENABLE_ON_CLICK_NAMES, true);
+          // beide Modi sofort aktivieren (UI toggles mitsynchronisieren)
+          var tSubs  = $("#toggleSubs");
+          var tNames = $("#toggleNames");
+          if (tSubs)  tSubs.checked  = true;
+          if (tNames) tNames.checked = true;
+          editSubsEnabled  = true;
+          editNamesEnabled = true;
+          renderMatrix();
+       };
+      showEnableDialog('names', enableNow, enableRemember);
+        return;
+      }
+    }
+
     if(editSubsEnabled && t.dataset.role === "cell"){
       if(!t.dataset.rxChanId || !t.dataset.txChanId) return;
       toggleSubscription(t); 
@@ -608,12 +695,29 @@ function renderMatrix(){
   var wrapEl = $("#matrixWrap");
 
   // mousedown: Start Painting
-  tbodyEl.onmousedown = function(ev){
-    if (!editSubsEnabled) return;
+ tbodyEl.onmousedown = function(ev){
+    var td = ev.target && ev.target.closest ? ev.target.closest("td") : null;
+
+    // Wenn Patchen aus ist → Dialog anbieten (nur bei Klick in Zellenbereich)
+    if (!editSubsEnabled){
+      if (td && td.dataset && td.dataset.role === "cell"){
+        var tSubs = $("#toggleSubs");
+        var enableNow = function(){
+          if (tSubs) tSubs.checked = true;
+          editSubsEnabled = true;
+          renderMatrix();
+        };
+        var enableRemember = function(){
+          prefSetBool(PREF_ENABLE_ON_CLICK_SUBS, true);
+          enableNow();
+        };
+        showEnableDialog('subs', enableNow, enableRemember);
+      }
+      return;
+    }
+
     if (ev.button !== 0) return; // nur linke Maustaste
-    var td = ev.target.closest("td");
-    if (!td || td.dataset.role !== "cell") return;
-    if (!td.dataset.rxChanId || !td.dataset.txChanId) return;
+    if (!td || td.dataset.role !== "cell") return;    if (!td.dataset.rxChanId || !td.dataset.txChanId) return;
 
     isPainting = true;
     paintVisitedRows = new Set();
@@ -826,11 +930,27 @@ function persist(){
 
 // --------- UI Bindings ----------
 function bindUI(){
-  var tSubs  = $("#toggleSubs");
+var tSubs  = $("#toggleSubs");
   var tNames = $("#toggleNames");
-  if(tSubs){ tSubs.addEventListener("change", function(e){ editSubsEnabled = !!e.target.checked; renderMatrix(); }); }
-  if(tNames){ tNames.addEventListener("change", function(e){ editNamesEnabled = !!e.target.checked; renderMatrix(); }); }
 
+  // Initialzustand aus Präferenzen übernehmen
+  var autoSubs  = prefGetBool(PREF_ENABLE_ON_CLICK_SUBS);
+  var autoNames = prefGetBool(PREF_ENABLE_ON_CLICK_NAMES);
+
+  if (tSubs){
+    if (autoSubs) { tSubs.checked = true; editSubsEnabled = true; }
+    tSubs.addEventListener("change", function(e){
+      editSubsEnabled = !!e.target.checked;
+      renderMatrix();
+    });
+  }
+  if (tNames){
+    if (autoNames) { tNames.checked = true; editNamesEnabled = true; }
+    tNames.addEventListener("change", function(e){
+      editNamesEnabled = !!e.target.checked;
+      renderMatrix();
+    });
+  }
   ["fTx","fRx"].forEach(function(id){
     var el = $("#"+id); if(!el) return;
     el.addEventListener("input", function(){ renderMatrix(); });
