@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dante Architect – Mapping Matrix</title>
-  <link rel="stylesheet" href="styles.css?v=matrix-move-1">
+  <link rel="stylesheet" href="styles.css?v=matrix-rail-fix-2"><!-- cache-bust für CSS -->
 </head>
 <body class="matrix-page">
     <header>
@@ -34,35 +34,39 @@
     </div>
   </header>
 
-  <div class="wrap">
-    <!-- kompakte Filter -->
-    <div class="filters">
-      <div>
-        <label for="fTx">Filter TX (Gerät ODER Kanal)</label>
-        <input id="fTx" type="text" placeholder="z.B. Stagebox, Kick, ..." />
+<div class="wrap">
+  <div class="matrix-layout">
+    <!-- Linke Filter-Rail -->
+    <aside class="matrix-rail">
+      <div class="rail-group">
+        <label for="fTx">Sender filtern</label>
+        <input id="fTx" type="text" placeholder="z. B. Stagebox, Kick …" />
       </div>
-      <div>
-        <label for="fRx">Filter RX (Gerät ODER Kanal)</label>
-        <input id="fRx" type="text" placeholder="z.B. FOH, L, R ..." />
+      <div class="rail-group">
+        <label for="fRx">Empfänger filtern</label>
+        <input id="fRx" type="text" placeholder="z. B. FOH, L, R …" />
       </div>
-      <div class="check">
+      <div class="rail-group check">
         <input id="onlyRowsWithSubs" type="checkbox" />
         <label for="onlyRowsWithSubs">Nur RX-Zeilen mit Subscriptions (momentane Auswahl einfrieren)</label>
       </div>
-      <div class="check">
+      <div class="rail-group check">
         <input id="onlyColsWithSubs" type="checkbox" />
         <label for="onlyColsWithSubs">Nur TX-Spalten mit Subscriptions (momentane Auswahl einfrieren)</label>
       </div>
-    </div>
+    </aside>
 
+    <!-- Rechte Seite: Matrix -->
     <div class="matrix-wrap" id="matrixWrap">
       <table class="matrix" id="matrix">
         <thead id="thead"></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <div class="hint" id="hint"></div>
   </div>
+
+  <div class="hint" id="hint"></div>
+</div>
 
   <script src="./Matrix.js"></script>
 </body>

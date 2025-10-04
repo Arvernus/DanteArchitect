@@ -382,58 +382,48 @@ function computeVisibleBase(){
     return fieldsMatchTokens(fields, tRx);
   }
   
- var visCols = [];
+  var visCols = [];
   devices.forEach(function(d, di){
     var devNameMatchTx = fieldsMatchTokens([d.name], tTx);
+    var txList = (!tTx.length || devNameMatchTx)
+      ? (d.tx || []).slice()
+      : (d.tx || []).filter(function(tx){ return fieldsMatchTokens([tx.label], tTx); });
 
-    // Kanal-Selektion (wenn kein Dev-Treffer)
-    var txList;
-    if (!tTx.length || devNameMatchTx) {
-      txList = d.tx.slice();
-    } else {
-      txList = d.tx.filter(function(tx){
-        // nur Kanal-Label prüfen (Gerätename traf ja nicht)
-        return fieldsMatchTokens([tx.label], tTx);
-      });
-    }
+    // NUR wenn überhaupt TX-Kanäle existieren (nach Filter)
+    if (txList.length === 0) return;
 
-    // nichts passt → Gerät ausblenden
-    if (txList.length === 0 && !devNameMatchTx) return;
+    // Gerätekopf-SPALTE
+    visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
 
-    if (collapsedTx[di]) {
-      // collapsed: Kopf zeigen, wenn Gerät matcht ODER mind. ein Kanal passt
-      visCols.push({ dev:d, devIndex: di, isDevice:true, tx:null });
-    } else {
+    // Kanäle anhängen, wenn nicht eingeklappt
+    if (!collapsedTx[di]) {
       txList.forEach(function(tx){
         visCols.push({ dev:d, devIndex: di, isDevice:false, tx:tx });
       });
     }
   });
 
-var visRows = [];
+ var visRows = [];
   devices.forEach(function(d, di){
     var devNameMatchRx = fieldsMatchTokens([d.name], tRx);
+    var rxList = (!tRx.length || devNameMatchRx)
+      ? (d.rx || []).slice()
+      : (d.rx || []).filter(function(rx){ return fieldsMatchTokens([rx.name], tRx); });
 
-    // Kanal-Selektion (wenn kein Dev-Treffer)
-    var rxList;
-    if (!tRx.length || devNameMatchRx) {
-      rxList = d.rx.slice();
-    } else {
-      rxList = d.rx.filter(function(rx){
-        return fieldsMatchTokens([rx.name], tRx);
-      });
-    }
+    // NUR wenn überhaupt RX-Kanäle existieren (nach Filter)
+    if (rxList.length === 0) return;
 
-    if (rxList.length === 0 && !devNameMatchRx) return;
+    // Gerätekopf-ZEILE
+    visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
 
-    if (collapsedRx[di]) {
-      visRows.push({ dev:d, devIndex: di, isDevice:true, rx:null });
-    } else {
+    // Kanäle anhängen, wenn nicht eingeklappt
+    if (!collapsedRx[di]) {
       rxList.forEach(function(rx){
         visRows.push({ dev:d, devIndex: di, isDevice:false, rx:rx });
       });
     }
   });
+
   return { visCols: visCols, visRows: visRows };
 }
 
@@ -505,9 +495,9 @@ function renderMatrix(){
 
   // ----- Kopfzeile 1 (TX-Gerätegruppen) -----
   var tr0 = cel("tr");
-  var thRXDev = cel("th","top-left-0","RX Gerät"); thRXDev.style.minWidth="220px";
-  var thRXChan= cel("th","top-left-1","RX Kanal");  thRXChan.style.minWidth="180px";
-  tr0.appendChild(thRXDev); 
+  var thRXDev = cel("th","top-left-0","");            thRXDev.style.minWidth="28px";   // schmale Rail
+  var thRXChan= cel("th","top-left-1","Empfänger");   thRXChan.style.minWidth="220px"; // breite RX-Kanalspalte
+  tr0.appendChild(thRXDev);
   tr0.appendChild(thRXChan);
 
   // TX-Spalten nach Geräten gruppieren
@@ -573,22 +563,38 @@ function renderMatrix(){
   var tr1 = cel("tr");
   tr1.appendChild(cel("th","rowhead","")); // unter RX Gerät
   tr1.appendChild(cel("th","rowchan","")); // unter RX Kanal
-  for(var i=0;i<visCols.length;i++){
+  for (var i=0;i<visCols.length;i++){
     var cc = visCols[i];
-    var thc = cel("th","tx-chan");
+    var bandClass = (cc.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
+
+    var thc = cel("th","tx-chan " + bandClass);
+
     if (cc.isDevice) {
-      thc.style.background = "#f7f7f7";
-      thc.textContent = "";
+      thc.classList.add("tx-rail");       // Rail-Kopf
+      thc.style.background = "#f0f2f5";
+
+      var wrap = cel("div","tx-devwrap","");
+      var toggle = cel("button","btn", collapsedTx[cc.devIndex] ? "+" : "–");
+      toggle.dataset.role = "toggle-tx";
+      toggle.dataset.devIndex = String(cc.devIndex);
+      wrap.appendChild(toggle);
+
+      var railMark = cel("div","tx-rail-mark","");
+      wrap.appendChild(railMark);
+
+      thc.appendChild(wrap);
     } else {
+      // TX-Kanal-Kopf (vertikal)
       var spc = cel("span","editable", cc.tx.label || "");
       spc.dataset.role = "tx-chan";
       spc.dataset.devIndex = String(cc.devIndex);
       spc.dataset.chanId   = String(cc.tx.id);
       if(editNamesEnabled){ spc.contentEditable = "true"; }
+      // vertikal darstellen (CSS steuert writing-mode)
       thc.appendChild(spc);
     }
     tr1.appendChild(thc);
-  }
+  }  
   thead.appendChild(tr1);
   
 // --- Ortho-Button in die linke obere Ecke setzen (Eckfeld der Matrix) ---
@@ -619,79 +625,141 @@ b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
 
 
   // ----- Tabellenkörper -----
+
+  // Laufgruppen je RX-Gerät vorbereiten (für Rail: start/mid/last/single)
+  var rxRunInfo = []; // pro Zeile: {pos:'dev'|'single'|'mid'|'last'}
+  (function(){
+    var i = 0;
+    while (i < visRows.length){
+      var row = visRows[i];
+      if (row.isDevice){
+        // Zähle Kinder
+        var j = i + 1, count = 0;
+        while (j < visRows.length && !visRows[j].isDevice && visRows[j].devIndex === row.devIndex){ count++; j++; }
+        if (count === 0){
+          rxRunInfo[i] = { pos: 'single' };
+        } else {
+          rxRunInfo[i] = { pos: 'dev' };
+          for (var k=1; k<=count; k++){
+            var pos = (k === count) ? 'last' : 'mid';
+            rxRunInfo[i + k] = { pos: pos };
+          }
+        }
+        i = i + 1 + count;
+      } else {
+        // Sollte nicht passieren (Kanäle ohne Kopf), aber falls doch:
+        rxRunInfo[i] = { pos: 'mid' };
+        i++;
+      }
+    }
+  })();
+
+
   for(var r=0; r<visRows.length; r++){
     var row = visRows[r];
     var tr = cel("tr");
 
-    var thD = cel("th","rowhead"); 
-    thD.style.background = "#f0f0f0";
-    var toggleRx = cel("button","btn", collapsedRx[row.devIndex] ? "+" : "–");
-    toggleRx.dataset.role = "toggle-rx"; 
-    toggleRx.dataset.devIndex = String(row.devIndex); 
-    toggleRx.style.marginRight = "6px";
-
-    // RX-Gerätename (Prefix/Suffix)
-    var partsRX = splitName(row.dev.name || "");
-    var stackRX = cel("span","name-stack","");
-    var topRX = cel("span","name-prefix", partsRX.prefix || "");
-    var botRX = cel("span","name-suffix editable", partsRX.suffix || "");
-
-    if (editNamesEnabled){
-      if (nameConceptEnabled()){
-        botRX.dataset.role = "dev-suffix-rx";
-        botRX.dataset.devIndex = String(row.devIndex);
-        botRX.contentEditable = "true";
-      } else {
-        botRX.textContent = row.dev.name || "(ohne Name)";
-        botRX.dataset.role = "dev-name-rx";
-        botRX.dataset.devIndex = String(row.devIndex);
-        botRX.contentEditable = "true";
-        topRX.textContent = "";
-      }
-    } else {
-      if (!nameConceptEnabled()){
-        botRX.textContent = row.dev.name || "(ohne Name)";
-        topRX.textContent = "";
-      }
+  // Linke Rail: Position streng an Vor-/Nachbarzeile festmachen (dev/single/mid/last)
+  var pos = (function rxRailPosAt(idx){
+    var row  = visRows[idx];
+    var prev = visRows[idx - 1];
+    var next = visRows[idx + 1];
+    if (row.isDevice){
+      // 'single' wenn keine nachfolgende Kanalzeile desselben Geräts sichtbar
+      if (!next || next.isDevice || next.devIndex !== row.devIndex) return 'single';
+      return 'dev';   // Gerätezeile mit folgenden Kanälen
     }
+    // Kanalzeilen: 'last' wenn nächste Zeile anderes Gerät (oder keine)
+    if (!next || next.isDevice || next.devIndex !== row.devIndex) return 'last';
+    return 'mid';
+  })(r);
+  var thD = cel("th","rowhead rowhead-narrow rx-railcell","");
+  if (pos === 'dev')    thD.classList.add("rx-rail-start","rx-railcell--dev");
+  if (pos === 'single') thD.classList.add("rx-rail-single","rx-railcell--dev");
+  if (pos === 'mid')    thD.classList.add("rx-rail-mid");
+  if (pos === 'last')   thD.classList.add("rx-rail-last");
+  tr.appendChild(thD);
 
-    stackRX.appendChild(topRX);
-    stackRX.appendChild(botRX);
-    thD.appendChild(toggleRx);
-    thD.appendChild(stackRX);
-    tr.appendChild(thD);
+  // Gerätezeile markieren (für Gesamtzeilenfärbung)
+  if (row.isDevice) tr.classList.add("is-device");
 
-    // RX-Kanalspalte
-    var thC = cel("th","rowchan");
-    if (row.isDevice) { 
-      thC.style.background = "#f7f7f7"; 
-      thC.textContent = ""; 
+  // RX-Gerätename + Toggle erscheinen in der KANALSPALTE, wenn Gerätezeile
+  var toggleRx = cel("button","btn", collapsedRx[row.devIndex] ? "+" : "–");
+  toggleRx.dataset.role = "toggle-rx"; 
+  toggleRx.dataset.devIndex = String(row.devIndex); 
+  toggleRx.style.marginRight = "6px";
+
+  var partsRX = splitName(row.dev.name || "");
+  var stackRX = cel("span","name-stack","");
+  var topRX = cel("span","name-prefix", partsRX.prefix || "");
+  var botRX = cel("span","name-suffix editable", partsRX.suffix || "");
+
+  if (editNamesEnabled){
+    if (nameConceptEnabled()){
+      botRX.dataset.role = "dev-suffix-rx";
+      botRX.dataset.devIndex = String(row.devIndex);
+      botRX.contentEditable = "true";
     } else {
-      var cspan = cel("span","editable", row.rx.name || "");
-      cspan.dataset.role = "rx-chan"; 
-      cspan.dataset.devIndex = String(row.devIndex); 
-      cspan.dataset.chanId   = String(row.rx.id);
-      if(editNamesEnabled){ cspan.contentEditable = "true"; }
-      thC.appendChild(cspan);
+      botRX.textContent = row.dev.name || "(ohne Name)";
+      botRX.dataset.role = "dev-name-rx";
+      botRX.dataset.devIndex = String(row.devIndex);
+      botRX.contentEditable = "true";
+      topRX.textContent = "";
     }
-    tr.appendChild(thC);
+  } else {
+    if (!nameConceptEnabled()){
+      botRX.textContent = row.dev.name || "(ohne Name)";
+      topRX.textContent = "";
+    }
+  }
+  stackRX.appendChild(topRX);
+  stackRX.appendChild(botRX);
+
+  // RX-Kanalspalte
+  var thC = cel("th","rowchan");
+  if (row.isDevice) {
+    thC.classList.add("dev-rowcell");
+    var devWrap = cel("div","dev-row","");
+    devWrap.appendChild(toggleRx);
+    devWrap.appendChild(stackRX);
+    thC.appendChild(devWrap);
+  } else {
+    var cspan = cel("span","editable", row.rx.name || "");
+    cspan.dataset.role = "rx-chan"; 
+    cspan.dataset.devIndex = String(row.devIndex); 
+    cspan.dataset.chanId   = String(row.rx.id);
+    if(editNamesEnabled){ cspan.contentEditable = "true"; }
+    thC.appendChild(cspan);
+  }
+  tr.appendChild(thC);
 
     // Zellen
-    for(var x=0; x<visCols.length; x++){
+    for (var x=0; x<visCols.length; x++){
       var col = visCols[x];
-      var cellEditable = (editSubsEnabled && !row.isDevice && !col.isDevice);
-      var td = cel("td", "cell" + (cellEditable ? " editable" : ""), "");
-      var isSub = (!row.isDevice && !col.isDevice) &&
+      var bandClass = (col.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
+
+      // Gerätespalte = Rail
+      if (col.isDevice){
+        var tdRail = cel("td","cell tx-railcell " + bandClass);
+        if (row.isDevice) tdRail.classList.add("tx-railcell--rowdev");
+        tr.appendChild(tdRail);
+        continue;
+      }
+
+      var cellEditable = (editSubsEnabled && !row.isDevice);
+      var td = cel("td", "cell " + bandClass + (cellEditable ? " editable" : ""), "");
+
+      var isSub = (!row.isDevice) &&
                   (row.rx.subDev === col.dev.name && row.rx.subChan === col.tx.label);
-      if(isSub){ td.appendChild(cel("span","dot","")); }
+      if (isSub){ td.appendChild(cel("span","dot","")); }
+
       td.dataset.role = "cell";
       td.dataset.rxDevIndex = String(row.devIndex);
       td.dataset.rxChanId   = row.isDevice ? "" : String(row.rx.id);
       td.dataset.txDevIndex = String(col.devIndex);
-      td.dataset.txChanId   = col.isDevice ? "" : String(col.tx.id);
+      td.dataset.txChanId   = String(col.tx.id);
       tr.appendChild(td);
     }
-
     tbody.appendChild(tr);
   }
 
