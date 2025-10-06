@@ -504,6 +504,77 @@ html, body{ overflow-x: auto; }     /* Horizontal-Scroll auf Fenster */
   background: #e0e3e8; /* wenn beides zusammenfällt: Gerätezeile + Rail */
 }
 
+/* TX-Rail-Kopfzeile (analog RX-Rail, aber in der 1. Zeile) */
+.matrix th.tx-railcell{
+  position: sticky; top: 0; z-index: 3;
+  width:34px; min-width:34px; max-width:34px;
+  background:#eceff1; /* Rail-Ton */
+  padding:4px 2px;
+}
+.matrix th.tx-railcell.tx-railcell--dev{ background:#e0e3e8; } /* Gerätezelle dunkler */
+.matrix th.tx-railcell::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  transform:translateX(-1px);
+  top:-1px;
+  bottom:-1px;
+}
+.matrix th.tx-railcell.tx-rail-start::before{
+  left:50%;
+  right:50%;              /* → Null-Länge: nix sichtbar */
+}
+.matrix th.tx-railcell.tx-rail-single::before{
+  left:50%;
+  right:50%;
+}
+.matrix th.tx-railcell.tx-rail-last::before{
+  left:-1px;
+  right:55%;
+}
+
+/* TX-Rail Kopfzeile: 90° nach rechts rotiert (Abzweige nach unten) */
+.matrix th.tx-railcell{ position: sticky; top: 0; z-index: 3; }
+.matrix th.tx-railcell::before{
+  content:"";
+  position:absolute;
+  top:50%;                          /* Linie mittig in der Höhe */
+  left:-1px;                        /* volle Breite als Standard */
+  right:-1px;
+  transform:translateY(-1px);
+  border-top:2px solid #c3c9d1;     /* horizontale Linie */
+  /* border-left entfällt */
+}
+/* Start/Single/Last definieren die Länge der Mittel-Linie weiter wie gehabt */
+.matrix th.tx-railcell.tx-rail-start::before{ top:50%; }
+.matrix th.tx-railcell.tx-rail-single::before{ top:50%; bottom:50%; }
+.matrix th.tx-railcell.tx-rail-last::before{ bottom:50%-5px; }
+
+/* mid: Abzweig nach unten (kurzer senkrechter Strich) */
+.matrix th.tx-railcell.tx-rail-mid::after{
+  content:"";
+  position:absolute;
+  left:calc(50% - 1px);
+  top:calc(50% - 1px);
+  width:0;
+  height:10px;
+  border-left:2px solid #c3c9d1;
+}
+
+/* last: abgerundetes Ende nach unten (Viertelbogen) */
+.matrix th.tx-railcell.tx-rail-last::after{
+  content:"";
+  position:absolute;
+  left:calc(50% - 5px);
+  top:calc(50% - 1px);
+  width:5px;
+  height:10px;
+  border-right:2px solid #c3c9d1;   /* von der Mitte nach unten links */
+  border-top:2px solid #c3c9d1; /* runder Abschluss unten */
+  border-top-right-radius:6px;
+}
+
+
 /* (Falls du Banding je Gerät nutzt, Rail-Töne sollen sich durchsetzen) */
 .matrix th.tx-chan.tx-band-odd.tx-rail,
 .matrix td.tx-band-odd.tx-railcell{ background: #eceff1; }
@@ -529,15 +600,14 @@ html, body{ overflow-x: auto; }     /* Horizontal-Scroll auf Fenster */
   border-left:2px solid #c3c9d1;
 }
 /* Start (Gerätezeile):*/
-.matrix .rowhead.rowhead-narrow.rx-railcell.rx-rail-start{
-  background:#e0e3e8;
-}
+.matrix .rowhead.rowhead-narrow.rx-railcell.rx-rail-start{ background:#e0e3e8;}
 .matrix .rowhead.rowhead-narrow.rx-railcell.rx-rail-start::before{
   top:auto;
   bottom:10px; /* = Höhe der Ecke */
 }
 .matrix .rx-railcell.rx-rail-start::before{ top:50%; }
 /* Single (Gerät ohne sichtbare Kanäle) */
+.matrix .rx-railcell.rx-rail-single::before{ background:#e0e3e8;}
 .matrix .rx-railcell.rx-rail-single::before{ top:50%; bottom:50%; }
 
 /* RX last – senkrechte Linie darf nach der Rundung NICHT weiterlaufen.

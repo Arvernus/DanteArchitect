@@ -500,102 +500,77 @@ function renderMatrix(){
   tr0.appendChild(thRXDev);
   tr0.appendChild(thRXChan);
 
-  // TX-Spalten nach Geräten gruppieren
-  var groupRuns = [], run = null;
-  for(var cidx=0;cidx<visCols.length;cidx++){
-    var c = visCols[cidx];
-    var dIdx = c.devIndex;
-    if(!run || run.devIndex !== dIdx){
-      run = { name: c.dev.name, dev: c.dev, devIndex: dIdx, cols: [], count: 0 };
-      groupRuns.push(run);
-    }
-    run.cols.push(c); run.count++;
-  }
+// TX-Rail-Kopfzeile: genau eine Zelle pro sichtbarer TX-Spalte (analog RX-Rail)
+for (var cidx = 0; cidx < visCols.length; cidx++) {
+  var c = visCols[cidx];
+  var thTxRail = cel("th","tx-railcell");
 
-  // TX-Gruppen-Header rendern
-  for(var g=0; g<groupRuns.length; g++){
-    var grp = groupRuns[g];
-    var th = cel("th","group"); 
-    th.colSpan = grp.count; 
-    th.style.background = "#f0f0f0";
-
-    var toggle = cel("button","btn", collapsedTx[grp.devIndex] ? "+" : "–");
-    toggle.dataset.role = "toggle-tx"; 
-    toggle.dataset.devIndex = String(grp.devIndex); 
-    toggle.style.marginRight = "6px";
-
-    // Namensanzeige: zweizeilig Prefix/Suffix wenn aktiv, sonst einzeilig
-    var partsTX = splitName(grp.name || "");
-    var stackTX = cel("span","name-stack","");
-    var topTX = cel("span","name-prefix", partsTX.prefix || "");
-    var botTX = cel("span","name-suffix editable", partsTX.suffix || "");
-
-    if (editNamesEnabled){
-      if (nameConceptEnabled()){
-        // Nur Suffix editierbar
-        botTX.dataset.role = "dev-suffix-tx";
-        botTX.dataset.devIndex = String(grp.devIndex);
-        botTX.contentEditable = "true";
-      } else {
-        // Fallback: kompletter Name editierbar
-        botTX.textContent = grp.name || "(ohne Name)";
-        botTX.dataset.role = "dev-name-tx";
-        botTX.dataset.devIndex = String(grp.devIndex);
-        botTX.contentEditable = "true";
-        topTX.textContent = ""; // keine Zweizeile
-      }
+  // Laufpositions-Klasse pro Gerätegruppe
+  var prev = visCols[cidx - 1], next = visCols[cidx + 1];
+  if (c.isDevice) {
+    // Gerät: start oder single
+    if (!next || next.isDevice || next.devIndex !== c.devIndex) {
+      thTxRail.classList.add("tx-rail-single","tx-railcell--dev");
     } else {
-      if (!nameConceptEnabled()){
-        botTX.textContent = grp.name || "(ohne Name)";
-        topTX.textContent = "";
-      }
+      thTxRail.classList.add("tx-rail-start","tx-railcell--dev");
     }
-
-    stackTX.appendChild(topTX);
-    stackTX.appendChild(botTX);
-    th.appendChild(toggle);
-    th.appendChild(stackTX);
-    tr0.appendChild(th);
+  } else {
+    // Kanal: last oder mid
+    if (!next || next.isDevice || next.devIndex !== c.devIndex) {
+      thTxRail.classList.add("tx-rail-last");
+    } else {
+      thTxRail.classList.add("tx-rail-mid");
+    }
   }
+
+  // Bänderung wie bei TX-Headern
+  var bandClass = (c.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
+  thTxRail.classList.add(bandClass);
+
+  tr0.appendChild(thTxRail);
+}
+
+
   thead.appendChild(tr0);
 
-  // ----- Kopfzeile 2 (TX-Kanäle) -----
-  var tr1 = cel("tr");
-  tr1.appendChild(cel("th","rowhead","")); // unter RX Gerät
-  tr1.appendChild(cel("th","rowchan","")); // unter RX Kanal
-  for (var i=0;i<visCols.length;i++){
-    var cc = visCols[i];
-    var bandClass = (cc.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
+// ----- Kopfzeile 2 (TX-Kanäle / Gerätespalten) -----
+var tr1 = cel("tr");
+tr1.appendChild(cel("th", "rowhead", ""));
+tr1.appendChild(cel("th", "rowchan", ""));
+for (var i = 0; i < visCols.length; i++) {
+  var cc = visCols[i];
+  var bandClass = (cc.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
+  var thc = cel("th", "tx-chan " + bandClass);
 
-    var thc = cel("th","tx-chan " + bandClass);
+  if (cc.isDevice) {
+    // Gerätespalte: Name (vertikal) + Toggle
+    thc.classList.add("tx-devcell");
+    var wrap = cel("div","tx-devwrap","");
+    var tgl = cel("button","btn", collapsedTx[cc.devIndex] ? "+" : "–");
+    tgl.dataset.role = "toggle-tx";
+    tgl.dataset.devIndex = String(cc.devIndex);
 
-    if (cc.isDevice) {
-      thc.classList.add("tx-rail");       // Rail-Kopf
-      thc.style.background = "#f0f2f5";
+    var parts = splitName(cc.dev.name || "");
+    var nameEl = cel("span","tx-devname",
+      nameConceptEnabled() ? (parts.suffix || "") : (cc.dev.name || "(ohne Name)")
+    );
+    if (nameConceptEnabled()) { nameEl.title = parts.prefix || ""; }
 
-      var wrap = cel("div","tx-devwrap","");
-      var toggle = cel("button","btn", collapsedTx[cc.devIndex] ? "+" : "–");
-      toggle.dataset.role = "toggle-tx";
-      toggle.dataset.devIndex = String(cc.devIndex);
-      wrap.appendChild(toggle);
-
-      var railMark = cel("div","tx-rail-mark","");
-      wrap.appendChild(railMark);
-
-      thc.appendChild(wrap);
-    } else {
-      // TX-Kanal-Kopf (vertikal)
-      var spc = cel("span","editable", cc.tx.label || "");
-      spc.dataset.role = "tx-chan";
-      spc.dataset.devIndex = String(cc.devIndex);
-      spc.dataset.chanId   = String(cc.tx.id);
-      if(editNamesEnabled){ spc.contentEditable = "true"; }
-      // vertikal darstellen (CSS steuert writing-mode)
-      thc.appendChild(spc);
-    }
-    tr1.appendChild(thc);
-  }  
-  thead.appendChild(tr1);
+    wrap.appendChild(tgl);
+    wrap.appendChild(nameEl);
+    thc.appendChild(wrap);
+  } else {
+    // TX-Kanal-Kopf (vertikal)
+    var spc = cel("span", "editable", cc.tx.label || "");
+    spc.dataset.role = "tx-chan";
+    spc.dataset.devIndex = String(cc.devIndex);
+    spc.dataset.chanId   = String(cc.tx.id);
+    if (editNamesEnabled) { spc.contentEditable = "true"; }
+    thc.appendChild(spc);
+  }
+  tr1.appendChild(thc);
+}
+thead.appendChild(tr1);
   
 // --- Ortho-Button in die linke obere Ecke setzen (Eckfeld der Matrix) ---
 (function ensureCornerOrthoButton(){
@@ -738,13 +713,13 @@ b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
       var col = visCols[x];
       var bandClass = (col.devIndex % 2) ? "tx-band-odd" : "tx-band-even";
 
-      // Gerätespalte = Rail
-      if (col.isDevice){
-        var tdRail = cel("td","cell tx-railcell " + bandClass);
-        if (row.isDevice) tdRail.classList.add("tx-railcell--rowdev");
-        tr.appendChild(tdRail);
-        continue;
-      }
+    // Gerätespalte: keine TX-Rail im Body (nur normale Zelle)
+    if (col.isDevice) {
+      var tdDev = cel("td","cell " + bandClass, "");
+      if (row.isDevice) tdDev.classList.add("tx-railcell--rowdev");
+      tr.appendChild(tdDev);
+      continue;
+    }
 
       var cellEditable = (editSubsEnabled && !row.isDevice);
       var td = cel("td", "cell " + bandClass + (cellEditable ? " editable" : ""), "");
