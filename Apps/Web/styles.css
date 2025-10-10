@@ -365,10 +365,20 @@ body.matrix-page .matrix td{ border:1px solid var(--grid-border); padding:6px 8p
 /* Sticky-Köpfe & linke Spalten (wie Dante Controller) */
 body.matrix-page .matrix thead th{ background:var(--head); position:sticky; top:0; z-index:3; }
 body.matrix-page .matrix .rowhead{ position:sticky; left:0;   z-index:2; background:var(--head); }
-body.matrix-page .matrix .rowchan{ position: sticky; left: 28px; z-index: 2; background: var(--head); }
+/* Empfänger-Kanal-Spalte immer im Vordergrund (Header + Body) */
+body.matrix-page .matrix .rowchan{
+  position: sticky;
+  left: 1px;      /* 28px Rail + 1px Zellen-Grenze → bündig */
+  z-index: 6;      /* vor Matrixzellen und Standard-Headern */
+  background: var(--head);
+}
 body.matrix-page .matrix .top-left-0{ position:sticky; left:0;    z-index:4; }
-body.matrix-page .matrix .top-left-1{ position: sticky; left: 28px; z-index: 4; }
-
+body.matrix-page .matrix .top-left-1{
+  position: sticky;
+  left: 29px;      /* exakt gleich wie .rowchan */
+  z-index: 7;      /* über .rowchan, damit der Header (B2) nie verdeckt wird */
+  background: var(--head);
+}
 /* Schmale linke Rail */
 body.matrix-page .matrix .rowhead{ width:28px; min-width:28px; max-width:28px; }
 

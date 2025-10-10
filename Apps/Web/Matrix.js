@@ -631,30 +631,26 @@ for (var i = 0; i < visCols.length; i++) {
 }
 thead.appendChild(tr1);
   
-// --- Ortho-Button in die linke obere Ecke setzen (Eckfeld der Matrix) ---
-(function ensureCornerOrthoButton(){
-  // Wir zielen auf die erste Zelle der zweiten Kopfzeile (leeres Eckfeld)
-  var corner = tr1.querySelector('th.rowhead');
-  if (!corner) return;
-
-  // Falls bereits vorhanden (bei erneutem render), nichts doppelt einfügen
-  if (corner.querySelector('#btnOrthoOnce')) return;
+// Ortho-Button in die Spalte „Empfänger Kanäle“ (Header-Zelle rowchan) setzen
+(function ensureRowchanOrthoButton(){
+  var host = tr1.querySelector('th.rowchan');
+  if (!host) return;
+  if (host.querySelector('#btnOrthoOnce')) return;
 
   var b = document.createElement('button');
   b.id = 'btnOrthoOnce';
   b.type = 'button';
   b.className = 'ortho-btn';
   b.title = 'Orthogonal zeichnen (einmal)';
-
-  // selbsterklärendes Icon: L-Form + Rahmen (Orthogonal)
-b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
-            +   '<rect x="3" y="3" width="18" height="18" rx="3" ry="3" fill="currentColor" opacity="0.2"></rect>'
-            +   '<path d="M6 6 H18 M6 6 V18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>'
-            +   '<path d="M6 6 L18 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>'
-            + '</svg>';
+  b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+              +   '<rect x="3" y="3" width="18" height="18" rx="3" ry="3" fill="currentColor" opacity="0.2"></rect>'
+              +   '<path d="M6 6 H18 M6 6 V18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>'
+              +   '<path d="M6 6 L18 18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>'
+              + '</svg>';
   b.addEventListener('click', function(){ armOrthoOnce(); });
-  if (!corner.style.position) corner.style.position = 'relative';
-  corner.appendChild(b);
+
+  if (!host.style.position) host.style.position = 'relative';
+  host.appendChild(b);
 })();
 
 
