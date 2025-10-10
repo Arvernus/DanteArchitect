@@ -425,9 +425,18 @@ body.matrix-page .ortho-btn svg{ width:16px; height:16px; display:block; fill:cu
 /* Tabellenbreite – horizontal muss das Fenster scrollen können */
 table.matrix{ border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; }
 
-/* Scroll-Container: horizontale Leiste am Fensterrand, NICHT im Wrapper */
-.matrix-wrap{ overflow: visible; }  /* vorher: auto → eigene Leiste */
-html, body{ overflow-x: auto; }     /* Horizontal-Scroll auf Fenster */
+html, body{ overflow-x:hidden; }
+body.matrix-page .matrix-wrap{ overflow-x:hidden; overflow-y:auto; }
+
+#hscrollProxy{
+  position:fixed; left:0; right:0; bottom:0;
+  height:20px; overflow-x:auto; overflow-y:hidden;
+  z-index:1000;
+  background:linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,.92));
+  border-top:1px solid #e5e5e5;
+}
+#hscrollProxy > .spacer{ height:1px; width:0; display:block; }
+
 
 /* TX-Gerätespalten: verticaler Gerätename + Layout */
 .matrix th.tx-chan.tx-devcell{
@@ -682,8 +691,14 @@ html, body{ overflow-x: auto; }     /* Horizontal-Scroll auf Fenster */
 }
 .dot::after{ content:"✓"; }
 
-/* horizontale Leiste unten am Fenster (nicht erst im Wrapper) */
-table.matrix{ width:max-content; min-width:100%; }
-.matrix-wrap{ overflow:visible; }
-html, body{ overflow-x:auto; }
+html, body{ overflow-x:hidden; }
+body.matrix-page .matrix-wrap{ overflow-x:hidden; overflow-y:auto; }
 
+#hscrollProxy{
+  position:fixed; left:0; right:0; bottom:0;
+  height:20px; overflow-x:auto; overflow-y:hidden;
+  z-index:1000;
+  background:linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,.92));
+  border-top:1px solid #e5e5e5;
+}
+#hscrollProxy > .spacer{ height:1px; width:0; display:block; }

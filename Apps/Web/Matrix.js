@@ -304,6 +304,7 @@ function parseXml(text){
     buildModel();
     renderMatrix();
     bindUI();
+    setupFixedHScroll();  // Proxy-Scrollbar initialisieren
 
     // Safety: beim Verlassen/Verstecken persistieren
     window.addEventListener("beforeunload", persist, {capture:true});
@@ -314,6 +315,64 @@ function parseXml(text){
     if(h) h.textContent = "Init-Fehler: " + (e.message || String(e));
   }
 })();
+
+// fixer Horizontal-Scrollbar (Proxy) am Fensterrand
+function setupFixedHScroll(){
+  var proxy = document.getElementById('hscrollProxy');
+  var wrap  = document.getElementById('matrixWrap') || document.querySelector('.matrix-wrap');
+  var table = document.getElementById('matrix');
+  if(!proxy || !wrap || !table) return;
+
+  try{ wrap.style.overflowX = 'hidden'; }catch(_){}
+
+  function ensureSpacer(){
+    var inner = proxy.querySelector('.spacer');
+    if(!inner){ inner = document.createElement('div'); inner.className='spacer'; inner.style.height='1px'; proxy.appendChild(inner); }
+    return inner;
+  }
+  function applyBottomOffset(){
+    var sb = document.querySelector('.statusbar');
+    var h = 0;
+    if (sb){
+      var cs = getComputedStyle(sb);
+      if (cs.display !== 'none' && cs.visibility !== 'hidden'){ h = sb.getBoundingClientRect().height || 0; }
+    }
+    proxy.style.bottom = (h|0) + 'px';
+  }
+  function syncSize(){
+    var inner = ensureSpacer();
+    var vw = document.documentElement ? document.documentElement.clientWidth : 0;
+    var w  = Math.max(wrap.scrollWidth, table.scrollWidth, vw);
+    inner.style.width = w + 'px';
+    if (proxy.scrollLeft !== wrap.scrollLeft) proxy.scrollLeft = wrap.scrollLeft;
+  }
+  function onProxyScroll(){ if (wrap.scrollLeft !== proxy.scrollLeft) wrap.scrollLeft = proxy.scrollLeft; }
+  function onWrapScroll(){  if (proxy.scrollLeft !== wrap.scrollLeft) proxy.scrollLeft = proxy.scrollLeft; }
+  function onWheelHorizontal(e){
+    if (e.deltaX || e.shiftKey){
+      proxy.scrollLeft += (e.deltaX || e.deltaY);
+      e.preventDefault();
+    }
+  }
+
+  proxy.addEventListener('scroll', onProxyScroll, {passive:true});
+  wrap .addEventListener('scroll', onWrapScroll,  {passive:true});
+  proxy.addEventListener('wheel',  onWheelHorizontal, {passive:false});
+  wrap .addEventListener('wheel',  onWheelHorizontal, {passive:false});
+  window.addEventListener('resize', function(){ applyBottomOffset(); syncSize(); });
+
+  var ro;
+  if ('ResizeObserver' in window){
+    ro = new ResizeObserver(syncSize);
+    ro.observe(wrap); ro.observe(table);
+  }
+  var mo = new MutationObserver(syncSize);
+  mo.observe(table, {childList:true, subtree:true, attributes:true});
+
+  applyBottomOffset();
+  setTimeout(function(){ applyBottomOffset(); syncSize(); }, 0);
+}
+
 
 // --------- Model-Aufbau ----------
 function buildModel(){
