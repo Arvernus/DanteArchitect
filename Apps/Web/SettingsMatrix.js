@@ -4,11 +4,18 @@
 
   // Spalten-Definition (erweiterbar)
 // Spalten-Definition + Interface-Helper
+// Ergänzte Spalten + Helper
 var COLS = [
   { id:"samplerate", label:"Sample Rate", type:"select", options:[44100,48000,88200,96000] },
   { id:"unicast_latency_ms", label:"Unicast Latency (ms)", type:"select", options:[0.25,0.5,1,2,4,5,6,10] },
   { id:"preferred_master", label:"Preferred Master", type:"select", options:["false","true"] },
   { id:"external_word_clock", label:"External Word Clock", type:"select", options:["false","true"] },
+  { id:"redundancy", label:"Redundancy Enabled", type:"select", options:["false","true"],
+    showIf:function(d){ return hasInterface(d,1) && hasDevEl(d,'redundancy'); } },
+  { id:"encoding_bits", label:"Encoding (bit)", type:"select", options:[16,24,32],
+    showIf:function(d){ return hasDevEl(d,'encoding'); } },
+  { id:"switch_vlan", label:"Switch VLAN", type:"number", min:1, step:1,
+    showIf:function(d){ return hasDevEl(d,'switch_vlan'); } },
   { id:"ip0_mode",   label:"IP Mode (P)", type:"select", options:["dynamic","static"] },
   { id:"ip0_addr",   label:"IP Address (P)", type:"text",  showIf:function(d){ return hasInterface(d,0); } },
   { id:"ip0_mask",   label:"Netmask (P)",   type:"text",  showIf:function(d){ return hasInterface(d,0); } },
@@ -20,6 +27,7 @@ var COLS = [
   { id:"ip1_gw",     label:"Gateway (S)",    type:"text", showIf:function(d){ return hasInterface(d,1); } },
   { id:"ip1_dns",    label:"DNS (S)",        type:"text", showIf:function(d){ return hasInterface(d,1); } }
 ];
+
 
 function hasInterface(d, idx){
   if (!d || !d.el) return idx === 0;
@@ -35,6 +43,10 @@ function columnVisibleForDevice(col, devObj){
   } catch(e){
     return true;
   }
+}
+
+function hasDevEl(d, selector){
+  return !!(d && d.el && d.el.querySelector(selector));
 }
 
 
@@ -118,29 +130,39 @@ function loadValuesFromPreset(xmlText){
       var de = devMap[d.name], v = null;
       if (!de) return;
 
-      if (c.id === "samplerate"){
-        var el = de.querySelector("samplerate");
-        if (el && el.textContent) v = Number(el.textContent.trim());
-      } else if (c.id === "unicast_latency_ms"){
-        var ul = de.querySelector("unicast_latency");
-        if (ul && ul.textContent){
-          var micros = Number(ul.textContent.trim());
-          if (!isNaN(micros)) v = micros/1000.0;
-        }
-      } else if (c.id === "preferred_master"){
-        var pm = de.querySelector("preferred_master");
-        if (pm && pm.getAttribute("value") != null) v = String(pm.getAttribute("value"));
-      } else if (c.id === "external_word_clock"){
-        var ew = de.querySelector("external_word_clock");
-        if (ew && ew.getAttribute("value") != null) v = String(ew.getAttribute("value"));
-      } else if (c.id.startsWith("ip")){
-        var net = c.id[2];
-        var iface = de.querySelector('interface[network="'+net+'"]');
-        if (iface){
-          var ipv4 = iface.querySelector("ipv4_address");
-          if (c.id.endsWith("_mode")){
+        if (c.id === "samplerate"){
+            var el = de.querySelector("samplerate");
+            if (el && el.textContent) v = Number(el.textContent.trim());
+        } else if (c.id === "unicast_latency_ms"){
+            var ul = de.querySelector("unicast_latency");
+            if (ul && ul.textContent){
+            var micros = Number(ul.textContent.trim());
+            if (!isNaN(micros)) v = micros/1000.0;
+            }
+        } else if (c.id === "preferred_master"){
+            var pm = de.querySelector("preferred_master");
+            if (pm && pm.getAttribute("value") != null) v = String(pm.getAttribute("value"));
+        } else if (c.id === "external_word_clock"){
+            var ew = de.querySelector("external_word_clock");
+            if (ew && ew.getAttribute("value") != null) v = String(ew.getAttribute("value"));
+      // Ergänzung in loadValuesFromPreset():
+        } else if (c.id === "redundancy"){
+            var r = de.querySelector("redundancy");
+            if (r && r.getAttribute("value") != null) v = String(r.getAttribute("value"));
+        } else if (c.id === "encoding_bits"){
+            var enc = de.querySelector("encoding");
+            if (enc && enc.textContent) v = Number(enc.textContent.trim());
+        } else if (c.id === "switch_vlan"){
+            var sv = de.querySelector("switch_vlan");
+            if (sv && sv.getAttribute("value") != null) v = Number(sv.getAttribute("value"));
+        } else if (c.id.startsWith("ip")){
+            var net = c.id[2];
+            var iface = de.querySelector('interface[network="'+net+'"]');
+            if (iface){
+            var ipv4 = iface.querySelector("ipv4_address");
+            if (c.id.endsWith("_mode")){
             if (ipv4 && ipv4.getAttribute("mode")) v = String(ipv4.getAttribute("mode"));
-          } else {
+        } else {
             var key = c.id.split("_")[1];
             if (key === "addr"){ var a = iface.querySelector("address");   if (a) v = (a.textContent||"").trim(); }
             if (key === "mask"){ var m = iface.querySelector("netmask");   if (m) v = (m.textContent||"").trim(); }
@@ -249,37 +271,43 @@ function buildBody(){
     th.textContent = rowDev.name || "";
     tr.appendChild(th);
 
-    COLS.forEach(function(c, idx){
-      if (!columnVisibleForDevice(c, rowDev)) return;
+// buildBody(): Spalten mit showIf=false als Platzhalter rendern (visibility:hidden)
+COLS.forEach(function(c, idx){
+  var td = document.createElement("td");
+  td.className = (idx%2 ? "tx-band-odd":"tx-band-even") + " cell";
 
-      var td = document.createElement("td");
-      td.className = (idx%2 ? "tx-band-odd":"tx-band-even") + " cell editable";
+  if (!columnVisibleForDevice(c, rowDev)) {
+    td.className += " col-hidden";
+    td.style.visibility = "hidden"; // Platz beibehalten, aber unsichtbar
+    tr.appendChild(td);
+    return;
+  }
 
-      var val = valueFor(c.id, rowDev.name);
-      var ed  = makeEditor(c, val, function(v){
-        state[c.id].overrides.set(rowDev.name, v);
-        refreshUniformMarks();
-      });
-      ed.dataset.scope = "cell";
-      ed.dataset.colId = c.id;
-      ed.dataset.dev   = rowDev.name;
-      td.appendChild(ed);
-
-      td.addEventListener("contextmenu", function(ev){
-        ev.preventDefault();
-        var colId = ed.dataset.colId;
-        var name  = ed.dataset.dev;
-        var v = readEditorValue(c, ed);
-        copyDown(colId, name, v);
-        refreshUniformMarks();
-      });
-
-      tr.appendChild(td);
-    });
-
-    tbody.appendChild(tr);
+  td.className += " editable";
+  var val = valueFor(c.id, rowDev.name);
+  var ed  = makeEditor(c, val, function(v){
+    state[c.id].overrides.set(rowDev.name, v);
+    refreshUniformMarks();
   });
-}
+  ed.dataset.scope = "cell";
+  ed.dataset.colId = c.id;
+  ed.dataset.dev   = rowDev.name;
+  td.appendChild(ed);
+
+  td.addEventListener("contextmenu", function(ev){
+    ev.preventDefault();
+    var colId = ed.dataset.colId;
+    var name  = ed.dataset.dev;
+    var v = readEditorValue(c, ed);
+    copyDown(colId, name, v);
+    refreshUniformMarks();
+  });
+
+  tr.appendChild(td);
+});
+    tbody.appendChild(tr);
+  }); // devices.forEach schließen
+}     // buildBody schließen
 
   function copyDown(colId, fromName, value){
     var start = devices.findIndex(function(x){ return x.name === fromName; });
@@ -416,6 +444,22 @@ function writeValuesToPreset(doc){
 
     var ew = resolved("external_word_clock", d.name);
     if (ew != null){ ensureEl(de, "external_word_clock", {value:String(ew)}); }
+
+    var rEl = de.querySelector("redundancy");
+    if (rEl){
+    var rv = resolved("redundancy", d.name);
+    if (rv != null) rEl.setAttribute("value", String(rv));
+    }
+    var encEl = de.querySelector("encoding");
+    if (encEl){
+    var ev = resolved("encoding_bits", d.name);
+    if (ev != null) encEl.textContent = String(ev|0);
+    }
+    var vlanEl = de.querySelector("switch_vlan");
+    if (vlanEl){
+    var vv = resolved("switch_vlan", d.name);
+    if (vv != null) vlanEl.setAttribute("value", String(Math.max(1, Math.min(4094, parseInt(vv,10)||0))));
+    }
 
     var mode0 = resolved("ip0_mode", d.name) || "dynamic";
     var if0 = ensureInterface(de, 0);
