@@ -97,6 +97,15 @@ body.matrix-page{
 .spinner.active{ opacity:1; }
 @keyframes spin{ to{ transform:rotate(360deg); } }
 
+/* ----- Fixe horizontale Scroll-Leiste (Proxy) ----- */
+#hscrollProxy{
+  position:fixed; left:0; right:0; bottom:0;
+  height:16px; overflow-x:auto; overflow-y:hidden;
+  background:transparent; z-index:940;
+}
+#hscrollProxy .spacer{ height:1px; }
+
+
 /* Sidebar rechts */
 .sidebar{
   position:fixed; top:0; right:0; height:100dvh;
@@ -375,7 +384,7 @@ body.matrix-page .matrix .rowchan{
 body.matrix-page .matrix .top-left-0{ position:sticky; left:0;    z-index:4; }
 body.matrix-page .matrix .top-left-1{
   position: sticky;
-  left: 29px;      /* exakt gleich wie .rowchan */
+  left: 0px;      /* exakt gleich wie .rowchan */
   z-index: 7;      /* über .rowchan, damit der Header (B2) nie verdeckt wird */
   background: var(--head);
 }

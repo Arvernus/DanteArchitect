@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dante Architect – Einstellungs-Matrix</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="matrix-page">
+  <header>
+    <a class="btn" href="./Index.html">← Übersicht</a>
+    <h1>Einstellungs-Matrix</h1>
+    <div class="spacer"></div>
+    <button class="btn" id="btnSaveBack">Speichern & Zurück</button>
+  </header>
+
+  <div class="wrap">
+    <div class="matrix-layout">
+      <aside class="matrix-rail">
+        <div class="rail-group">
+          <label for="filterDev">Geräte filtern</label>
+          <input id="filterDev" type="text" placeholder="z. B. Stagebox, FOH …">
+        </div>
+      </aside>
+
+      <div class="matrix-wrap" id="settingsWrap">
+        <table class="matrix" id="settingsMatrix">
+          <thead id="sHead"></thead>
+          <tbody id="sBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="hint" id="hint"></div>
+  </div>
+
+<!-- fixe horizontale Scroll-Leiste (Proxy) -->
+<div id="hscrollProxy"><div class="spacer"></div></div>
+<script src="./Lib.js"></script>
+<script src="./SettingsMatrix.js"></script>
+
+</body>
+</html>

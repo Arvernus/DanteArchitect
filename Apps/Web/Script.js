@@ -871,10 +871,11 @@ function fillPresetTable(xml){
     tbody.appendChild(tr);
   });
 
-  var be = $("#btnExport"); if(be) be.disabled = devs.length === 0;
-  var bm = $("#btnMatrix"); if(bm) bm.disabled = devs.length === 0;
+var hasDevs = devs.length > 0;
+var be = $("#btnExport");          if (be) be.disabled = !hasDevs;
+var bm = $("#btnMatrix");          if (bm) bm.disabled = !hasDevs;
+var bs = $("#btnSettingsMatrix");  if (bs) bs.disabled = !hasDevs;
 }
-
 
 
 function fillOnlineTable(list){
@@ -1846,17 +1847,43 @@ if (renameChecked) {
 })();
 
 // ---- Matrix Navigation (immer frischen Stand schreiben) ----
+// neuer Block (neben bindMatrix) – Navigation zur Settings-Matrix:
+// ---- Mapping-Matrix Navigation (robust, mit Session-Fallback) ----
 (function bindMatrix(){
-  var bm = $("#btnMatrix"); if(!bm) return;
+  var bm = $("#btnMatrix"); if (!bm) return;
   bm.addEventListener("click", function(){
+    var xml = null;
+    if (typeof lastXmlDoc !== "undefined" && lastXmlDoc){
+      try { xml = new XMLSerializer().serializeToString(lastXmlDoc); } catch(_) {}
+    }
+    if (!xml && typeof readFromSession === "function"){ xml = readFromSession(); }
+    if (!xml && typeof sessionStorage !== "undefined"){
+      try { xml = sessionStorage.getItem("DA_PRESET_XML") || ""; } catch(_) {}
+    }
+    if (!xml){ alert("Kein Preset geladen."); return; }
+    if (typeof writePresetToSession === "function"){
+      writePresetToSession(xml);
+    } else if (typeof sessionStorage !== "undefined"){
+      try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+    }
+    location.href = "./Matrix.html#via=btn";
+  }, { once:false });
+})();
+
+
+// ---- Settings-Matrix Navigation (immer frischen Stand schreiben) ----
+(function bindSettingsMatrix(){
+  var bs = $("#btnSettingsMatrix"); if(!bs) return;
+  bs.addEventListener("click", function(){
     var xml = null;
     if(lastXmlDoc) xml = new XMLSerializer().serializeToString(lastXmlDoc);
     if(!xml) xml = readFromSession();
     if(!xml){ alert("Kein Preset geladen."); return; }
     writePresetToSession(xml);
-    location.href = "./Matrix.html#via=btn";
+    location.href = "./SettingsMatrix.html#via=btn";
   });
 })();
+
 
 // ===== Dante Online Helper (mDNS via lokaler Node-Helper) =====
 (function danteOnlineHelper(){
