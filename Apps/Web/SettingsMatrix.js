@@ -2,56 +2,45 @@
 (function(){
   var SKEY_XML = "DA_PRESET_XML";
 
+  if (typeof writeToSessionAndName !== "function"){
+  window.writeToSessionAndName = function(xml){
+    try { sessionStorage.setItem(SKEY_XML, xml); } catch(_){}
+    try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml, ts: Date.now() }); } catch(_){}
+  };
+}
+
   // Spalten-Definition (erweiterbar)
 // Spalten-Definition + Interface-Helper
 // Ergänzte Spalten + Helper
+// COLS ohne showIf – alle Felder immer sichtbar
 var COLS = [
   { id:"samplerate", label:"Sample Rate", type:"select", options:[44100,48000,88200,96000] },
   { id:"unicast_latency_ms", label:"Unicast Latency (ms)", type:"select", options:[0.25,0.5,1,2,4,5,6,10] },
   { id:"preferred_master", label:"Preferred Master", type:"select", options:["false","true"] },
   { id:"external_word_clock", label:"External Word Clock", type:"select", options:["false","true"] },
-  { id:"redundancy", label:"Redundancy Enabled", type:"select", options:["false","true"],
-    showIf:function(d){ return hasInterface(d,1) && hasDevEl(d,'redundancy'); } },
-  { id:"encoding_bits", label:"Encoding (bit)", type:"select", options:[16,24,32],
-    showIf:function(d){ return hasDevEl(d,'encoding'); } },
-  { id:"switch_vlan", label:"Switch VLAN", type:"number", min:1, step:1,
-    showIf:function(d){ return hasDevEl(d,'switch_vlan'); } },
+  { id:"redundancy", label:"Redundancy Enabled", type:"select", options:["false","true"] },
+  { id:"encoding_bits", label:"Encoding (bit)", type:"select", options:[16,24,32] },
+  { id:"switch_vlan", label:"Switch VLAN", type:"number", min:1, max:4094, step:1 },
   { id:"ip0_mode",   label:"IP Mode (P)", type:"select", options:["dynamic","static"] },
-  { id:"ip0_addr",   label:"IP Address (P)", type:"text",  showIf:function(d){ return hasInterface(d,0); } },
-  { id:"ip0_mask",   label:"Netmask (P)",   type:"text",  showIf:function(d){ return hasInterface(d,0); } },
-  { id:"ip0_gw",     label:"Gateway (P)",   type:"text",  showIf:function(d){ return hasInterface(d,0); } },
-  { id:"ip0_dns",    label:"DNS (P)",       type:"text",  showIf:function(d){ return hasInterface(d,0); } },
-  { id:"ip1_mode",   label:"IP Mode (S)",   type:"select", options:["dynamic","static"], showIf:function(d){ return hasInterface(d,1); } },
-  { id:"ip1_addr",   label:"IP Address (S)", type:"text", showIf:function(d){ return hasInterface(d,1); } },
-  { id:"ip1_mask",   label:"Netmask (S)",    type:"text", showIf:function(d){ return hasInterface(d,1); } },
-  { id:"ip1_gw",     label:"Gateway (S)",    type:"text", showIf:function(d){ return hasInterface(d,1); } },
-  { id:"ip1_dns",    label:"DNS (S)",        type:"text", showIf:function(d){ return hasInterface(d,1); } }
+  { id:"ip0_addr",   label:"IP Address (P)", type:"text" },
+  { id:"ip0_mask",   label:"Netmask (P)",   type:"text" },
+  { id:"ip0_gw",     label:"Gateway (P)",   type:"text" },
+  { id:"ip0_dns",    label:"DNS (P)",       type:"text" },
+  { id:"ip1_mode",   label:"IP Mode (S)",   type:"select", options:["dynamic","static"] },
+  { id:"ip1_addr",   label:"IP Address (S)", type:"text" },
+  { id:"ip1_mask",   label:"Netmask (S)",    type:"text" },
+  { id:"ip1_gw",     label:"Gateway (S)",    type:"text" },
+  { id:"ip1_dns",    label:"DNS (S)",        type:"text" }
 ];
 
-
-function hasInterface(d, idx){
-  if (!d || !d.el) return idx === 0;
-  var sel = 'interface[network="'+idx+'"]';
-  return d.el.querySelector(sel) != null;
-}
-
-// Sichtbarkeitsprüfung pro Spalte robust kapseln
+// Sichtbarkeitsprüfung pro Spalte: alle Spalten sind sichtbar
 function columnVisibleForDevice(col, devObj){
-  try {
-    if (typeof col.showIf !== "function") return true;
-    return !!col.showIf(devObj);
-  } catch(e){
-    return true;
-  }
-}
-
-function hasDevEl(d, selector){
-  return !!(d && d.el && d.el.querySelector(selector));
+  return true;
 }
 
 
   var devices = [];      // [{name}]
-  var state   = {};      // { colId: { default: any, overrides: Map<name,any> } }
+  var state   = {};      // { colId: { default: any, touched: { [name]: true } } }
 
   function $(s){ return document.querySelector(s); }
 
@@ -81,39 +70,108 @@ function loadDevicesFromPreset(xmlText){
 
 
   function defaultValue(col){
-    if (col.type === "select") return (col.options && col.options[0]) || "";
-    if (col.type === "number") return 0;
-    return "";
+    // Vorgabe: Felder, die im Preset fehlen, bleiben NULL (leer)
+    return null;
   }
-  function ensureState(){
+function ensureState(){
   COLS.forEach(function(c){
-    if (!state[c.id]) state[c.id] = { default: defaultValue(c), overrides: new Map() };
+    if (!state[c.id]) state[c.id] = { default: null, touched: Object.create(null) };
   });
 }
+  // PATCH (Insert) at: SettingsMatrix.js
+  // Anchor: directly AFTER the existing ensureState() function
+
+  // --- Schutz-Mechanik: initial sind alle Zellen geschützt, bis sie 1x editiert wurden ---
+  function ensureProtection(col){
+    if (!col.protected){
+      col.protected = Object.create(null); // { [deviceName]: true }
+      if (Array.isArray(devices)){
+        devices.forEach(d => { col.protected[d.name] = true; });
+      }
+    }
+  }
+  function isProtected(colId, devName){
+    var col = state[colId]; if (!col) return false;
+    ensureProtection(col);
+    return !!col.protected[devName];
+  }
+  function clearProtection(colId, devName){
+    var col = state[colId]; if (!col) return;
+    ensureProtection(col);
+    delete col.protected[devName]; // ab jetzt nicht mehr durch Standard-Zeile überschreiben
+  }
 
 
   function valueFor(colId, devName){
-    var c = state[colId]; if (!c) return "";
-    if (c.overrides.has(devName)) return c.overrides.get(devName);
+    var c = state[colId]; if (!c) return null;
     return c.default;
   }
-  function isUniform(colId){
-    var c = state[colId]; if (!c) return false;
-    var val = c.default;
-    for (var i=0;i<devices.length;i++){
-      var dn = devices[i].name;
-      var v  = c.overrides.has(dn) ? c.overrides.get(dn) : val;
-      if (String(v) !== String(val)) return false;
-    }
-    return true;
+
+  function resolved(colId, devName){
+    return valueFor(colId, devName);
   }
+  // Berührungs-Helper
+  function columnTouched(colId, devName){
+    var c = state[colId]; if (!c) return false;
+    return !!(c.touched && c.touched[devName]);
+}
+
+function anyTouched(colIds, devName){
+    for (var i=0;i<colIds.length;i++){
+      if (columnTouched(colIds[i], devName)) return true;
+    }
+    return false;
+  }
+
+
+    // -------- XML-Helfer --------
+  // <tagName> unter parent sicherstellen, optional Attribute setzen
+  function ensureEl(parent, tagName, attrs){
+    var el = parent.querySelector(tagName);
+    if (!el){
+      el = parent.ownerDocument.createElement(tagName);
+      parent.appendChild(el);
+    }
+    if (attrs && typeof attrs === "object"){
+      Object.keys(attrs).forEach(function(k){
+        if (attrs[k] != null) el.setAttribute(k, String(attrs[k]));
+      });
+    }
+    return el;
+  }
+
+  // Fallback, falls ensureInterface nicht global definiert ist
+  if (typeof ensureInterface !== "function"){
+    function ensureInterface(parent, idx){
+      var sel = 'interface[network="'+idx+'"]';
+      var el  = parent.querySelector(sel);
+      if (!el){
+        el = parent.ownerDocument.createElement("interface");
+        el.setAttribute("network", String(idx));
+        parent.appendChild(el);
+      }
+      return el;
+    }
+  }
+
+
+function isUniform(colId){
+  if (!devices || !devices.length) return true;
+  var firstSet=false, firstVal=null;
+  for (var i=0;i<devices.length;i++){
+    var v = readCellValue(colId, devices[i].name);
+    if (!firstSet){ firstVal=v; firstSet=true; continue; }
+    if (String(v) !== String(firstVal)) return false;
+  }
+  return true;
+}
 
  // Read per-device settings from preset XML and fold into defaults/overrides
 // Werte aus PRESET XML lesen
+// Werte aus PRESET XML lesen (bereinigt)
 function loadValuesFromPreset(xmlText){
   if (!xmlText) return;
-  var doc;
-  try { doc = parseXml(xmlText); } catch(_) { return; }
+  var doc; try { doc = parseXml(xmlText); } catch(_) { return; }
 
   var devMap = {};
   var devEls = Array.prototype.slice.call(doc.querySelectorAll("preset > device"));
@@ -127,42 +185,41 @@ function loadValuesFromPreset(xmlText){
   COLS.forEach(function(c){
     var vals = [], perDev = new Map();
     devices.forEach(function(d){
-      var de = devMap[d.name], v = null;
-      if (!de) return;
+      var de = devMap[d.name]; if (!de) return;
+      var v = null;
 
-        if (c.id === "samplerate"){
-            var el = de.querySelector("samplerate");
-            if (el && el.textContent) v = Number(el.textContent.trim());
-        } else if (c.id === "unicast_latency_ms"){
-            var ul = de.querySelector("unicast_latency");
-            if (ul && ul.textContent){
-            var micros = Number(ul.textContent.trim());
-            if (!isNaN(micros)) v = micros/1000.0;
-            }
-        } else if (c.id === "preferred_master"){
-            var pm = de.querySelector("preferred_master");
-            if (pm && pm.getAttribute("value") != null) v = String(pm.getAttribute("value"));
-        } else if (c.id === "external_word_clock"){
-            var ew = de.querySelector("external_word_clock");
-            if (ew && ew.getAttribute("value") != null) v = String(ew.getAttribute("value"));
-      // Ergänzung in loadValuesFromPreset():
-        } else if (c.id === "redundancy"){
-            var r = de.querySelector("redundancy");
-            if (r && r.getAttribute("value") != null) v = String(r.getAttribute("value"));
-        } else if (c.id === "encoding_bits"){
-            var enc = de.querySelector("encoding");
-            if (enc && enc.textContent) v = Number(enc.textContent.trim());
-        } else if (c.id === "switch_vlan"){
-            var sv = de.querySelector("switch_vlan");
-            if (sv && sv.getAttribute("value") != null) v = Number(sv.getAttribute("value"));
-        } else if (c.id.startsWith("ip")){
-            var net = c.id[2];
-            var iface = de.querySelector('interface[network="'+net+'"]');
-            if (iface){
-            var ipv4 = iface.querySelector("ipv4_address");
-            if (c.id.endsWith("_mode")){
+      if (c.id === "samplerate"){
+        var el = de.querySelector("samplerate");
+        if (el && el.textContent) v = Number(el.textContent.trim());
+      } else if (c.id === "unicast_latency_ms"){
+        var ul = de.querySelector("unicast_latency");
+        if (ul && ul.textContent){
+          var micros = Number(ul.textContent.trim());
+          if (!isNaN(micros)) v = micros/1000.0;
+        }
+      } else if (c.id === "preferred_master"){
+        var pm = de.querySelector("preferred_master");
+        if (pm && pm.getAttribute("value") != null) v = String(pm.getAttribute("value"));
+      } else if (c.id === "external_word_clock"){
+        var ew = de.querySelector("external_word_clock");
+        if (ew && ew.getAttribute("value") != null) v = String(ew.getAttribute("value"));
+      } else if (c.id === "redundancy"){
+        var r = de.querySelector("redundancy");
+        if (r && r.getAttribute("value") != null) v = String(r.getAttribute("value"));
+      } else if (c.id === "encoding_bits"){
+        var enc = de.querySelector("encoding");
+        if (enc && enc.textContent) v = Number(enc.textContent.trim());
+      } else if (c.id === "switch_vlan"){
+        var sv = de.querySelector("switch_vlan");
+        if (sv && sv.getAttribute("value") != null) v = Number(sv.getAttribute("value"));
+      } else if (c.id.startsWith("ip")){
+        var net = c.id[2];
+        var iface = de.querySelector('interface[network="'+net+'"]');
+        if (iface){
+          var ipv4 = iface.querySelector("ipv4_address");
+          if (c.id.endsWith("_mode")){
             if (ipv4 && ipv4.getAttribute("mode")) v = String(ipv4.getAttribute("mode"));
-        } else {
+          } else {
             var key = c.id.split("_")[1];
             if (key === "addr"){ var a = iface.querySelector("address");   if (a) v = (a.textContent||"").trim(); }
             if (key === "mask"){ var m = iface.querySelector("netmask");   if (m) v = (m.textContent||"").trim(); }
@@ -176,16 +233,15 @@ function loadValuesFromPreset(xmlText){
     });
 
     if (vals.length){
-      var freq = {}, best=null, bestN=-1;
-      vals.forEach(function(s){ freq[s]=(freq[s]||0)+1; });
-      Object.keys(freq).forEach(function(k){ if (freq[k]>bestN){ best=k; bestN=freq[k]; }});
-      var bestVal = (c.type === "number") ? Number(best) : (c.id==="unicast_latency_ms" ? Number(best) : best);
-      state[c.id].default = bestVal;
-      devices.forEach(function(d){
-        var vv = perDev.has(d.name) ? perDev.get(d.name) : bestVal;
-        if (String(vv) !== String(bestVal)) state[c.id].overrides.set(d.name, vv);
-        else state[c.id].overrides.delete(d.name);
-      });
+    var freq = {}, best=null, bestN=-1;
+    vals.forEach(function(s){ freq[s]=(freq[s]||0)+1; });
+    Object.keys(freq).forEach(function(k){ if (freq[k]>bestN){ best=k; bestN=freq[k]; }});
+    var bestVal = (c.type === "number" || c.id==="unicast_latency_ms") ? Number(best) : best;
+    state[c.id].default = bestVal;
+    state[c.id].initial = Object.create(null);
+    devices.forEach(function(d){
+      if (perDev.has(d.name)) state[c.id].initial[d.name] = perDev.get(d.name);
+    });
     }
   });
 }
@@ -215,50 +271,257 @@ function loadValuesFromPreset(xmlText){
     thName.textContent = "Standard";
     trDefault.appendChild(thName);
 
-    COLS.forEach(function(c, idx){
-      var td = document.createElement("th");
-      td.className = (idx%2 ? "tx-band-odd":"tx-band-even");
-      var input = makeEditor(c, state[c.id].default, function(v){
-        state[c.id].default = v;
-        refreshUniformMarks();
-      });
-      input.dataset.scope = "default";
-      td.appendChild(input);
-      trDefault.appendChild(td);
-    });
-    thead.appendChild(trDefault);
+COLS.forEach(function(c, idx){
+  var td = document.createElement("th");
+  td.className = (idx%2 ? "tx-band-odd":"tx-band-even");
+
+var input = makeEditor(c, consensusValue(c.id), function(v){
+  applyStandardToAll(c.id, input, v);
+  refreshUniformMarks();
+});
+  input.dataset.scope = "default";
+  input.addEventListener("focus", function(){ input.dataset._armed = "1"; });
+input.addEventListener("blur", function(){
+  if (input.dataset._armed === "1"){
+    applyStandardToAll(c.id, input);
+    refreshUniformMarks();
+  }
+  input.dataset._armed = "";
+});
+  td.appendChild(input);
+  trDefault.appendChild(td);
+});
+    thead.appendChild(trDefault)
+  }
+    // Einmalige Verteilung des Default-Werts auf Geräte ohne Override
+function applyDefaultAsOverrides(colId, value){
+  ensureState();
+  var col = state[colId]; if (!col) return;
+  var v = (value === "" ? null : value);
+  if (!col.overrides) col.overrides = new Map();
+  devices.forEach(function(d){
+    col.overrides.set(d.name, v);
+  });
+  var cdef = COLS.find(function(x){ return x.id === colId; });
+  var tbody = $("#sBody");
+if (tbody && cdef){
+  var inputs = tbody.querySelectorAll('input[data-col-id="'+colId+'"], select[data-col-id="'+colId+'"]');
+  inputs.forEach(function(ed){
+    var devName = ed && ed.dataset ? ed.dataset.dev : null;
+    if (!devName) return;
+    setEditorControl(cdef, ed, v);
+    if (!state[colId].touched) state[colId].touched = Object.create(null);
+    state[colId].touched[devName] = true;
+  });
+}
+}
+
+  // Editor-Wert einer Zelle setzen (UI, ohne Override)
+  function setEditorControl(col, ed, value){
+    var v = (value == null ? "" : value);
+    if (!ed) return;
+    if (col.type === "select"){
+      ed.value = String(v);
+      if (v !== "" && !Array.prototype.some.call(ed.options||[], function(o){ return o.value == String(v); })){
+        var opt = document.createElement("option");
+        opt.value = String(v); opt.textContent = String(v);
+        ed.appendChild(opt);
+        ed.value = String(v);
+      }
+    } else if (col.type === "number"){
+      ed.value = (v === "" ? "" : String(v));
+    } else {
+      ed.value = String(v);
+    }
   }
 
-  function makeEditor(col, value, onChange){
-    var el;
-    if (col.type === "select"){
-      el = document.createElement("select");
-      (col.options||[]).forEach(function(opt){
-        var o = document.createElement("option");
-        o.value = opt; o.textContent = opt;
-        el.appendChild(o);
-      });
-      el.value = String(value||"");
-    } else if (col.type === "number"){
-      el = document.createElement("input");
-      el.type = "number";
-      if (col.min != null)  el.min = col.min;
-      if (col.step != null) el.step = col.step;
-      el.value = String(value);
-    } else {
-      el = document.createElement("input");
-      el.type = "text";
-      el.value = String(value||"");
+  function getColDef(colId){
+  for (var i=0;i<COLS.length;i++) if (COLS[i].id === colId) return COLS[i];
+  return null;
+  }
+  function getCellEditor(colId, devName){
+    var tbody = $("#sBody"); if (!tbody) return null;
+    return tbody.querySelector('[data-scope="cell"][data-col-id="'+colId+'"][data-dev="'+devName+'"]');
+  }
+  function readCellValue(colId, devName){
+    var ed = getCellEditor(colId, devName); if (!ed) return null;
+    var c  = getColDef(colId); if (!c) return null;
+    return readEditorValue(c, ed);
+  }
+
+  // Default -> Zellen ohne Override live updaten
+function applyDefaultToColumn(colId){
+  var c = COLS.find(function(x){ return x.id === colId; }); if (!c) return;
+  var tbody = $("#sBody"); if (!tbody) return;
+  devices.forEach(function(d){
+    var ed = tbody.querySelector('[data-scope="cell"][data-col-id="'+colId+'"][data-dev="'+d.name+'"]');
+    if (!ed) return;
+    if (!state[colId].touched[d.name]){ setEditorControl(c, ed, state[colId].default); }
+  });
+  refreshDefaultRowDisplay();
+}
+  // Konsenswert über alle Geräte (effektive Werte)
+  function consensusValue(colId){
+    var firstSet = false, firstVal = null;
+    for (var i=0;i<devices.length;i++){
+      var dn = devices[i].name;
+      var v = readCellValue(colId, dn);
+      if (!firstSet){ firstVal = v; firstSet = true; }
+      if (String(v) !== String(firstVal)) return null;
     }
-    el.addEventListener("change", function(){ onChange && onChange(readEditorValue(col, el)); });
-    el.addEventListener("input",  function(){ onChange && onChange(readEditorValue(col, el)); });
-    el.style.width = "160px";
-    return el;
+    return firstVal;
   }
-  function readEditorValue(col, el){
-    if (col.type === "number") return Number(el.value);
-    return el.value;
+  // Standardzeile nur als Anzeige des Konsenses (oder NULL) aktualisieren
+function refreshDefaultRowDisplay(){
+  var thead = $("#sHead"); if (!thead) return;
+  var row2 = thead.rows[1]; if (!row2) return;
+COLS.forEach(function(c, idx){
+  var cell = row2.cells[idx+1]; if (!cell) return;
+  var ed   = cell.querySelector('select,input'); if (!ed) return;
+  if (ed.dataset._editing === "1") return;
+  var cv   = consensusValue(c.id);
+  setEditorControl(c, ed, cv);
+});
+}
+
+function writeIfTouched(colId, devName, de, xmlKey, options){
+  if (!columnTouched(colId, devName)) return;
+  var v = readCellValue(colId, devName);
+  if (v == null){
+    var el = de.querySelector(xmlKey); if (el) el.remove();
+    return;
   }
+  if (options && options.valueAttr){
+    ensureEl(de, xmlKey, {value:String(v)});
+  } else if (options && options.transform){
+    ensureEl(de, xmlKey).textContent = options.transform(v);
+  } else {
+    ensureEl(de, xmlKey).textContent = String(v);
+  }
+}
+
+function writeIpIfTouched(devName, devEl, netIdx){
+  var modeId = "ip"+netIdx+"_mode";
+  var addrId = "ip"+netIdx+"_addr";
+  var maskId = "ip"+netIdx+"_mask";
+  var gwId   = "ip"+netIdx+"_gw";
+  var dnsId  = "ip"+netIdx+"_dns";
+
+  var any =
+    columnTouched(modeId, devName) ||
+    columnTouched(addrId, devName) ||
+    columnTouched(maskId, devName) ||
+    columnTouched(gwId,   devName) ||
+    columnTouched(dnsId,  devName);
+  if (!any) return;
+
+  var iface = ensureInterfaceEl(devEl, netIdx);
+  var ipv4  = iface.querySelector("ipv4_address") || iface.ownerDocument.createElement("ipv4_address");
+  if (!ipv4.parentNode) iface.appendChild(ipv4);
+
+  if (columnTouched(modeId, devName)){
+    var mv = readCellValue(modeId, devName);
+    if (mv == null) ipv4.removeAttribute("mode");
+    else ipv4.setAttribute("mode", String(mv));
+  }
+  if (columnTouched(addrId, devName)){
+    var v = readCellValue(addrId, devName);
+    if (v == null){ var el = iface.querySelector("address"); if (el) el.remove(); }
+    else ensureEl(iface, "address").textContent = String(v);
+  }
+  if (columnTouched(maskId, devName)){
+    var v = readCellValue(maskId, devName);
+    if (v == null){ var el = iface.querySelector("netmask"); if (el) el.remove(); }
+    else ensureEl(iface, "netmask").textContent = String(v);
+  }
+  if (columnTouched(gwId, devName)){
+    var v = readCellValue(gwId, devName);
+    if (v == null){ var el = iface.querySelector("gateway"); if (el) el.remove(); }
+    else ensureEl(iface, "gateway").textContent = String(v);
+  }
+  if (columnTouched(dnsId, devName)){
+    var v = readCellValue(dnsId, devName);
+    if (v == null){ var el = iface.querySelector("dnsserver"); if (el) el.remove(); }
+    else ensureEl(iface, "dnsserver").textContent = String(v);
+  }
+}
+
+
+
+// Anwenden des Standardwerts auf ALLE Devices, ausgelöst durch User-Interaktion (Focus->Blur)
+function applyStandardToAll(colId, stdEditor, explicitValue){
+  ensureState();
+  var cdef = COLS.find(function(x){ return x.id === colId; }); if (!cdef) return;
+  var v = (arguments.length >= 3) ? explicitValue : readEditorValue(cdef, stdEditor);
+  state[colId].default = v;
+  var tbody = $("#sBody"); if (!tbody) return;
+  (devices || []).forEach(function(d){
+    var ed = getCellEditor(colId, d.name);
+    if (ed){
+      setEditorControl(cdef, ed, v);
+      if (!state[colId].touched) state[colId].touched = Object.create(null);
+      state[colId].touched[d.name] = true;
+    }
+  });
+  refreshUniformMarks();
+  refreshDefaultRowDisplay();
+}
+
+
+// makeEditor(): Select bekommt (null)-Option; Number/Text erlauben leere Eingaben -> null
+function makeEditor(col, value, onChange){
+  var el;
+  if (col.type === "select"){
+    el = document.createElement("select");
+    var nullOpt = document.createElement("option");
+    nullOpt.value = ""; nullOpt.textContent = "(null)";
+    el.appendChild(nullOpt);
+    (col.options||[]).forEach(function(opt){
+      var o = document.createElement("option");
+      o.value = String(opt); o.textContent = String(opt);
+      el.appendChild(o);
+    });
+    el.value = (value == null ? "" : String(value));
+    el.addEventListener("change", function(){
+      var v = el.value;
+      onChange(v === "" ? null : v);
+    });
+  } else if (col.type === "number"){
+    el = document.createElement("input");
+    el.type = "number";
+    if (col.min != null) el.min = String(col.min);
+    if (col.max != null) el.max = String(col.max);
+    if (col.step!= null) el.step= String(col.step);
+    el.value = (value == null ? "" : String(value));
+    el.placeholder = "null";
+    el.addEventListener("input", function(){
+      var v = el.value;
+      onChange(v === "" ? null : Number(v));
+    });
+  } else {
+    el = document.createElement("input");
+    el.type = "text";
+    el.value = (value == null ? "" : String(value));
+    el.placeholder = "null";
+    el.addEventListener("input", function(){
+      var v = el.value;
+      onChange(v === "" ? null : v);
+    });
+  }
+  return el;
+}
+
+function readEditorValue(col, ed){
+  if (!ed) return null;
+  if (col.type === "select"){
+    return ed.value === "" ? null : ed.value;
+  } else if (col.type === "number"){
+    var t = ed.value; if (t === "") return null;
+    var n = Number(t); return isNaN(n) ? null : n;
+  } else {
+    return ed.value === "" ? null : ed.value;
+  }
+}
 
 function buildBody(){
   var tbody = $("#sBody"); if (!tbody) return;
@@ -284,9 +547,12 @@ COLS.forEach(function(c, idx){
   }
 
   td.className += " editable";
-  var val = valueFor(c.id, rowDev.name);
+var val = (state[c.id] && state[c.id].initial && (rowDev.name in state[c.id].initial))
+          ? state[c.id].initial[rowDev.name]
+          : valueFor(c.id, rowDev.name);
   var ed  = makeEditor(c, val, function(v){
-    state[c.id].overrides.set(rowDev.name, v);
+    ensureState();
+    state[c.id].touched[rowDev.name] = true;
     refreshUniformMarks();
   });
   ed.dataset.scope = "cell";
@@ -309,14 +575,19 @@ COLS.forEach(function(c, idx){
   }); // devices.forEach schließen
 }     // buildBody schließen
 
-  function copyDown(colId, fromName, value){
-    var start = devices.findIndex(function(x){ return x.name === fromName; });
-    if (start < 0) return;
-    for (var i=start; i<devices.length; i++){
-      var dn = devices[i].name;
-      state[colId].overrides.set(dn, value);
+function copyDown(colId, fromName, value){
+  var start = devices.findIndex(function(x){ return x.name === fromName; });
+  if (start < 0) return;
+  for (var i=start; i<devices.length; i++){
+    var dn = devices[i].name;
+    var ed = getCellEditor(colId, dn);
+    var c  = getColDef(colId);
+    if (ed && c){
+      setEditorControl(c, ed, value);
+      if (state[colId] && state[colId].touched) state[colId].touched[dn] = true;
     }
   }
+}
 
 function refreshUniformMarks(){
   var thead = $("#sHead"); if(!thead) return;
@@ -330,13 +601,15 @@ function refreshUniformMarks(){
       if (isUniform(c.id)) color = "#e6ffe6";
     } else {
       var cnt = 0;
-      devices.forEach(function(d){
-        if (String(valueFor(c.id, d.name)) === "true") cnt++;
-      });
+    devices.forEach(function(d){
+      if (String(readCellValue(c.id, d.name)) === "true") cnt++;
+    });
       if (cnt === 1) color = "#e6ffe6";
     }
     cell.style.background = color;
   });
+  // Am Ende von refreshUniformMarks():
+  refreshDefaultRowDisplay(); // nur UI, keine State-Änderung
 }
 
 
@@ -381,112 +654,130 @@ renderAll();
         });
       });
     }
+  }
 
-// Save & Back: schreibt XML und geht zurück
-var back = $("#btnSaveBack");
-if (back){
-  back.addEventListener("click", function(){
-    try {
-      var doc = parseXml(xml);
-      writeValuesToPreset(doc);
-      var out = new XMLSerializer().serializeToString(doc);
-      try { sessionStorage.setItem(SKEY_XML, out); } catch(_){}
-    } catch(e) {
-      alert("Fehler beim Schreiben: " + (e.message||e));
-    }
-    location.href = "./Index.html#via=settings-matrix";
-  });
+
+// writeValuesToPreset jetzt top-level (außerhalb von init), wie im Diff
+function ensureInterface(parent, idx){
+  var sel = 'interface[network="'+idx+'"]';
+  var el  = parent.querySelector(sel);
+  if (!el){
+    el = parent.ownerDocument.createElement("interface");
+    el.setAttribute("network", String(idx));
+    parent.appendChild(el);
+  }
+  return el;
 }
-
-// Werte ins PRESET XML schreiben
 function writeValuesToPreset(doc){
   var devMap = {};
-  var devEls = Array.prototype.slice.call(doc.querySelectorAll("preset > device"));
-  if (devEls.length === 0) devEls = Array.prototype.slice.call(doc.querySelectorAll("device"));
-  devEls.forEach(function(de){
-    var nEl = de.querySelector("name");
-    var name = nEl && nEl.textContent ? nEl.textContent.trim() : "";
-    if (name) devMap[name] = de;
+  Array.prototype.forEach.call(doc.querySelectorAll("device"), function(el){
+    var n = el.querySelector("name");
+    var name = n && n.textContent ? n.textContent.trim() : "";
+    if (name) devMap[name] = el;
   });
-
-  function resolved(colId, devName){
-    var c = state[colId];
-    return (c && c.overrides.has(devName)) ? c.overrides.get(devName) : (c ? c.default : null);
-  }
-  function ensureEl(parent, tag, attrs){
-    var el = parent.querySelector(tag);
-    if (!el){ el = parent.ownerDocument.createElement(tag); parent.appendChild(el); }
-    if (attrs){ Object.keys(attrs).forEach(function(k){ el.setAttribute(k, attrs[k]); }); }
-    return el;
-  }
-  function ensureInterface(de, idx){
-    var sel = 'interface[network="'+idx+'"]';
-    var it = de.querySelector(sel);
-    if (!it){
-      it = de.ownerDocument.createElement("interface");
-      it.setAttribute("network", String(idx));
-      de.appendChild(it);
-    }
-    return it;
-  }
-
   devices.forEach(function(d){
     var de = devMap[d.name]; if (!de) return;
-
-    var sr = resolved("samplerate", d.name);
-    if (sr != null){ var el = ensureEl(de, "samplerate"); el.textContent = String(sr|0); }
-
-    var lat = resolved("unicast_latency_ms", d.name);
-    if (lat != null){ var ul = ensureEl(de, "unicast_latency"); ul.textContent = String(Math.round(Number(lat)*1000)); }
-
-    var pm = resolved("preferred_master", d.name);
-    if (pm != null){ ensureEl(de, "preferred_master", {value:String(pm)}); }
-
-    var ew = resolved("external_word_clock", d.name);
-    if (ew != null){ ensureEl(de, "external_word_clock", {value:String(ew)}); }
-
-    var rEl = de.querySelector("redundancy");
-    if (rEl){
-    var rv = resolved("redundancy", d.name);
-    if (rv != null) rEl.setAttribute("value", String(rv));
-    }
-    var encEl = de.querySelector("encoding");
-    if (encEl){
-    var ev = resolved("encoding_bits", d.name);
-    if (ev != null) encEl.textContent = String(ev|0);
-    }
-    var vlanEl = de.querySelector("switch_vlan");
-    if (vlanEl){
-    var vv = resolved("switch_vlan", d.name);
-    if (vv != null) vlanEl.setAttribute("value", String(Math.max(1, Math.min(4094, parseInt(vv,10)||0))));
-    }
-
-    var mode0 = resolved("ip0_mode", d.name) || "dynamic";
-    var if0 = ensureInterface(de, 0);
-    ensureEl(if0, "ipv4_address", {mode:String(mode0)});
-    if (mode0 === "static"){
-      ensureEl(if0, "address").textContent   = String(resolved("ip0_addr", d.name) || "");
-      ensureEl(if0, "netmask").textContent   = String(resolved("ip0_mask", d.name) || "");
-      ensureEl(if0, "gateway").textContent   = String(resolved("ip0_gw", d.name)   || "");
-      ensureEl(if0, "dnsserver").textContent = String(resolved("ip0_dns", d.name)  || "");
-    }
-
-    if (hasInterface({el:de},1) || state["ip1_mode"]){
-      var mode1 = resolved("ip1_mode", d.name);
-      if (mode1 != null){
-        var if1 = ensureInterface(de, 1);
-        ensureEl(if1, "ipv4_address", {mode:String(mode1||"dynamic")});
-        if (mode1 === "static"){
-          ensureEl(if1, "address").textContent   = String(resolved("ip1_addr", d.name) || "");
-          ensureEl(if1, "netmask").textContent   = String(resolved("ip1_mask", d.name) || "");
-          ensureEl(if1, "gateway").textContent   = String(resolved("ip1_gw", d.name)   || "");
-          ensureEl(if1, "dnsserver").textContent = String(resolved("ip1_dns", d.name)  || "");
-        }
-      }
-    }
+    writeIfTouched("samplerate",          d.name, de, "samplerate",      { transform: v => String(v|0) });
+    writeIfTouched("unicast_latency_ms",  d.name, de, "unicast_latency", { transform: v => String(Math.round(Number(v)*1000)) });
+    writeIfTouched("preferred_master",    d.name, de, "preferred_master",{ valueAttr: true });
+    writeIfTouched("external_word_clock", d.name, de, "external_word_clock",{ valueAttr: true });
+    writeIfTouched("redundancy",          d.name, de, "redundancy",      { valueAttr: true });
+    writeIfTouched("encoding_bits",       d.name, de, "encoding",        { transform: v => String(v|0) });
+    writeIfTouched("switch_vlan",         d.name, de, "switch_vlan",     { valueAttr: true });
+    writeIpIfTouched(d.name, de, 0, ensureInterface);
+    writeIpIfTouched(d.name, de, 1, ensureInterface);
+    placeSettingsBeforeChannels(de);
   });
 }
+
+// ---------- Platzierung & Reihenfolge der Settings vor den Channels ----------
+var SETTINGS_ORDER = [
+  {type:"tag", sel:"switch_vlan"},
+  {type:"tag", sel:"preferred_master"},
+  {type:"tag", sel:"external_word_clock"},
+  {type:"tag", sel:"samplerate"},
+  {type:"tag", sel:"encoding"},
+  {type:"tag", sel:"unicast_latency"},
+  {type:"iface", idx:0},
+  {type:"iface", idx:1}
+];
+
+function firstChannelRef(devEl){
+  return devEl.querySelector("txchannel, rxchannel");
+}
+function moveBefore(node, ref){
+  if (!node || !ref || node === ref) return;
+  ref.parentNode.insertBefore(node, ref);
+}
+function ensureInterfaceEl(devEl, idx){
+  var sel = 'interface[network="'+idx+'"]';
+  var el  = devEl.querySelector(sel);
+  if (!el){
+    el = devEl.ownerDocument.createElement("interface");
+    el.setAttribute("network", String(idx));
+    devEl.appendChild(el); // Einsortierung erfolgt danach in placeSettingsBeforeChannels
   }
+  return el;
+}
+function placeSettingsBeforeChannels(devEl){
+  var ref = firstChannelRef(devEl);
+  if (!ref) return; // keine Channels -> nichts zu tun
+  SETTINGS_ORDER.forEach(function(item){
+    var node = null;
+    if (item.type === "tag"){
+      node = devEl.querySelector(item.sel);
+    } else if (item.type === "iface"){
+      node = devEl.querySelector('interface[network="'+item.idx+'"]');
+    }
+    if (node) moveBefore(node, ref);
+  });
+}
+
+
+// Aktuelle Settings in das Preset-XML aus der Session übernehmen und wieder speichern
+function writePresetToSession(xml){
+  try { sessionStorage.setItem("DA_PRESET_XML", xml); } catch(_) {}
+  try { window.name = JSON.stringify({ type:"DA_PRESET", xml: xml, ts: Date.now() }); } catch(_) {}
+}
+function persistSettingsToSession(){
+  try{
+    var s = (typeof readFromSession === "function") ? readFromSession() : null;
+    if (!s) return;
+    var doc = parseXml(s);
+    try { if (typeof ensurePresetEnvelope === "function") ensurePresetEnvelope(doc); } catch(_){}
+    writeValuesToPreset(doc);
+    var xml = new XMLSerializer().serializeToString(doc);
+    if (typeof writeToSession === "function") writeToSession(xml);
+    else writeToSessionAndName(xml);
+    writePresetToSession(xml);
+  }catch(e){
+    // still: Export/Navi nicht blockieren
+  }
+}
+  window.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "hidden") persistSettingsToSession();
+  }, {passive:true});
+  window.addEventListener("pagehide", persistSettingsToSession, {passive:true});
+["btnBack","btnSettingsBack","btnSaveBack","btnSaveSettings"].forEach(function(id){
+  var el = document.getElementById(id);
+  if (el && !el.__settingsPersistBound){
+    el.addEventListener("click", persistSettingsToSession);
+    el.__settingsPersistBound = true;
+  }
+});
+
+// S&B: Nach dem Persistieren sicher zurück zur Übersicht navigieren
+(function bindSaveBack(){
+  var el = document.getElementById("btnSaveBack");
+  if (el && !el.__saveBackNavBound){
+    el.addEventListener("click", function(){
+      try { persistSettingsToSession(); } catch(_){}
+      location.href = "./Index.html#via=settings-matrix";
+    });
+    el.__saveBackNavBound = true;
+  }
+})();
+
 
   try { init(); } catch(e){
     var hint = $("#hint");

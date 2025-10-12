@@ -203,6 +203,26 @@ function serializeWithHeader(xmlDoc){
   }
 }
 
+// XML hübsch einrücken (2 Leerzeichen), Header bleibt erhalten
+function prettyPrintXml(xml, indent){
+  indent = indent || "  ";
+  var header = "";
+  var m = String(xml||"").match(/^\s*<\?xml[^>]*\?>\s*/i);
+  if (m){ header = m[0].trim(); xml = String(xml).slice(m[0].length); }
+  xml = String(xml).replace(/>(\s*)</g, ">\n<");
+  var pad = 0;
+  var out = xml.split("\n").map(function(line){
+    var l = line.trim();
+    if (!l) return "";
+    if (/^<\/[^>]+>/.test(l)) pad = Math.max(pad-1, 0);
+    var pref = indent.repeat(pad) + l;
+    if (/^<[^!?][^>]*[^/]>$/.test(l) && !/<\/[^>]+>$/.test(l)) pad++;
+    return pref;
+  }).join("\n");
+  return (header ? header + "\n" : "") + out;
+}
+
+
 // Ensure Preset Envelope (root <preset> with version, <name>, <description>)
 function ensurePresetEnvelope(doc){
   if (!doc) return;
@@ -1835,8 +1855,9 @@ if (renameChecked) {
     }
     if(!lastXmlDoc){ alert("Bitte zuerst ein Preset laden."); return; }
     try { ensurePresetEnvelope(lastXmlDoc); } catch(_){}
-    var content = serializeWithHeader(lastXmlDoc);
-    var blob = new Blob([content], { type: "application/xml" });
+var content = serializeWithHeader(lastXmlDoc);
+var pretty  = prettyPrintXml(content, "  ");
+var blob = new Blob([pretty], { type: "application/xml" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "ArchitectExport.xml";
