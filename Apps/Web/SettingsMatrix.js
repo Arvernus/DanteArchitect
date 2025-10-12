@@ -1,7 +1,7 @@
 // Apps/Web/SettingsMatrix.js
 (function(){
   var SKEY_XML = "DA_PRESET_XML";
-  var UI = { ipExpanded: {0:false, 1:false} };
+  var UI = { ipExpanded: {0:false, 1:false}, editingCols: Object.create(null), defaultEditing: Object.create(null) };
 
   if (typeof writeToSessionAndName !== "function"){
   window.writeToSessionAndName = function(xml){
@@ -284,17 +284,22 @@ var input = makeEditor(c, consensusValue(c.id), function(v){
   refreshUniformMarks();
 });
   input.dataset.scope = "default";
-  input.addEventListener("focus", function(){ input.dataset._armed = "1"; });
-input.addEventListener("blur", function(){
-  if (input.dataset._armed === "1"){
-    applyStandardToAll(c.id, input);
-    refreshUniformMarks();
-    if (c.id==="ip0_mode") onIpModeChanged(0);
-    if (c.id==="ip1_mode") onIpModeChanged(1);
-    if (c.id==="redundancy") updateIpModeSVisibility();
-  }
-  input.dataset._armed = "";
-});
+  input.addEventListener("focus", function(){
+    input.dataset._armed = "1";
+    input.dataset._editing = "1";
+    UI.defaultEditing[c.id] = true;
+  });
+  input.addEventListener("blur", function(){
+    var wasArmed = (input.dataset._armed === "1");
+    delete input.dataset._editing;
+    input.dataset._armed = "";
+    if (wasArmed){
+      applyStandardToAll(c.id, input);
+      refreshUniformMarks();
+    }
+    UI.defaultEditing[c.id] = false;
+    refreshDefaultRowDisplay();
+  });
   td.appendChild(input);
   trDefault.appendChild(td);
 });
@@ -354,6 +359,25 @@ if (tbody && cdef){
     return tbody.querySelector('[data-scope="cell"][data-col-id="'+colId+'"][data-dev="'+devName+'"]');
   }
 
+function isEditorVisible(ed){
+  if (!ed) return false;
+  var st = window.getComputedStyle ? getComputedStyle(ed) : ed.style;
+  if (st && (st.display === "none" || st.visibility === "hidden")) return false;
+  var td = ed.closest ? ed.closest("td") : ed.parentElement;
+  if (td){
+    var tdSt = window.getComputedStyle ? getComputedStyle(td) : td.style;
+    if (tdSt && tdSt.display === "none") return false;
+  }
+  var tr = td && (td.parentElement && td.parentElement.tagName === "TR") ? td.parentElement : null;
+  if (tr){
+    var trSt = window.getComputedStyle ? getComputedStyle(tr) : tr.style;
+    if (trSt && trSt.display === "none") return false;
+  }
+  if (ed.offsetParent === null) return false;
+  return true;
+}
+
+
 function toggleCellEditor(colId, devName, show){
   var ed = getCellEditor(colId, devName); if (!ed) return;
   ed.style.display = show ? "" : "none";
@@ -371,10 +395,12 @@ function toggleCellEditor(colId, devName, show){
 function applyDefaultToColumn(colId){
   var c = COLS.find(function(x){ return x.id === colId; }); if (!c) return;
   var tbody = $("#sBody"); if (!tbody) return;
-  devices.forEach(function(d){
-    var ed = tbody.querySelector('[data-scope="cell"][data-col-id="'+colId+'"][data-dev="'+d.name+'"]');
-    if (!ed) return;
-    if (!state[colId].touched[d.name]){ setEditorControl(c, ed, state[colId].default); }
+  var editors = tbody.querySelectorAll('[data-scope="cell"][data-col-id="'+colId+'"]');
+  editors.forEach(function(ed){
+    if (!isEditorVisible(ed)) return;
+    var devName = ed.dataset && ed.dataset.dev ? ed.dataset.dev : null;
+    if (!devName) return;
+    if (!state[colId].touched[devName]){ setEditorControl(c, ed, state[colId].default); }
   });
   refreshDefaultRowDisplay();
 }
@@ -393,13 +419,15 @@ function applyDefaultToColumn(colId){
 function refreshDefaultRowDisplay(){
   var thead = $("#sHead"); if (!thead) return;
   var row2 = thead.rows[1]; if (!row2) return;
-COLS.forEach(function(c, idx){
-  var cell = row2.cells[idx+1]; if (!cell) return;
-  var ed   = cell.querySelector('select,input'); if (!ed) return;
-  if (ed.dataset._editing === "1") return;
-  var cv   = consensusValue(c.id);
-  setEditorControl(c, ed, cv);
-});
+  COLS.forEach(function(c, idx){
+    var cell = row2.cells[idx+1]; if (!cell) return;
+    var ed   = cell.querySelector('select,input'); if (!ed) return;
+    if (ed.dataset._editing === "1") return;
+    if (UI.defaultEditing && UI.defaultEditing[c.id]) return;
+    if (UI.editingCols && UI.editingCols[c.id]) return;
+    var cv = consensusValue(c.id);
+    setEditorControl(c, ed, cv);
+  });
 }
 
 function ipCols(idx){
@@ -643,13 +671,14 @@ function applyStandardToAll(colId, stdEditor, explicitValue){
   var v = (arguments.length >= 3) ? explicitValue : readEditorValue(cdef, stdEditor);
   state[colId].default = v;
   var tbody = $("#sBody"); if (!tbody) return;
-  (devices || []).forEach(function(d){
-    var ed = getCellEditor(colId, d.name);
-    if (ed){
-      setEditorControl(cdef, ed, v);
-      if (!state[colId].touched) state[colId].touched = Object.create(null);
-      state[colId].touched[d.name] = true;
-    }
+  var editors = tbody.querySelectorAll('[data-scope="cell"][data-col-id="'+colId+'"]');
+  editors.forEach(function(ed){
+    if (!isEditorVisible(ed)) return;
+    var devName = ed.dataset && ed.dataset.dev ? ed.dataset.dev : null;
+    if (!devName) return;
+    setEditorControl(cdef, ed, v);
+    if (!state[colId].touched) state[colId].touched = Object.create(null);
+    state[colId].touched[devName] = true;
   });
   refreshUniformMarks();
   refreshDefaultRowDisplay();
@@ -761,7 +790,12 @@ var val = (state[c.id] && state[c.id].initial && (rowDev.name in state[c.id].ini
     copyDown(colId, name, v);
     refreshUniformMarks();
   });
-
+  
+  ed.addEventListener("focus", function(){ UI.editingCols[c.id] = true; });
+  ed.addEventListener("blur", function(){
+  delete UI.editingCols[c.id];
+  refreshDefaultRowDisplay();
+});
   tr.appendChild(td);
 });
     tbody.appendChild(tr);
