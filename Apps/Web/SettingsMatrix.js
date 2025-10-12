@@ -168,7 +168,6 @@ function isUniform(colId){
 
  // Read per-device settings from preset XML and fold into defaults/overrides
 // Werte aus PRESET XML lesen
-// Werte aus PRESET XML lesen (bereinigt)
 function loadValuesFromPreset(xmlText){
   if (!xmlText) return;
   var doc; try { doc = parseXml(xmlText); } catch(_) { return; }
@@ -229,7 +228,8 @@ function loadValuesFromPreset(xmlText){
         }
       }
 
-      if (v != null){ perDev.set(d.name, v); vals.push(String(v)); }
+      perDev.set(d.name, v);
+      if (v != null) vals.push(String(v));
     });
 
     if (vals.length){
@@ -474,7 +474,7 @@ function makeEditor(col, value, onChange){
   if (col.type === "select"){
     el = document.createElement("select");
     var nullOpt = document.createElement("option");
-    nullOpt.value = ""; nullOpt.textContent = "(null)";
+    nullOpt.value = ""; nullOpt.textContent = "";
     el.appendChild(nullOpt);
     (col.options||[]).forEach(function(opt){
       var o = document.createElement("option");
