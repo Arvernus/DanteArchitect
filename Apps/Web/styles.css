@@ -17,6 +17,53 @@ body.matrix-page{
   flex-direction:column;
   color:#111; /* wie bisher auf der Matrix-Seite */
 }
+#sHead select, #sHead input,
+#sBody select, #sBody input{
+  width: 100%;
+  max-width: 220px;
+  box-sizing: border-box;
+}
+th.col-narrow, td.col-narrow{
+  width: 48px;
+  max-width: 48px;
+  min-width: 40px;
+  text-align: center;
+  white-space: nowrap;
+}
+td.col-narrow > select,
+td.col-narrow > input{
+  max-width: 100%;
+}
+
+body.matrix-page > header{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:8px 12px;
+  border-bottom:1px solid #eee;
+}
+body.matrix-page > header .spacer{ flex:1; }
+body.matrix-page > header h1{ margin:0; font-size:20px; font-weight:600; }
+
+.header-filter{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.header-filter label{ white-space:nowrap; color:#444; }
+.header-filter input{
+  width:240px;
+  padding:6px 8px;
+  border:1px solid #ccc;
+  border-radius:6px;
+}
+.header-filter .desc{
+  font-size:12px;
+  color: var(--muted);
+  white-space:nowrap;
+}
+
 
 /* Cards */
 .card{ border:1px solid #e5e5e5; border-radius:10px; background:#fff; }

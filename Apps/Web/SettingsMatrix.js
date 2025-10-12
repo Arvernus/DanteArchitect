@@ -275,6 +275,9 @@ function loadValuesFromPreset(xmlText){
 COLS.forEach(function(c, idx){
   var td = document.createElement("th");
   td.className = (idx%2 ? "tx-band-odd":"tx-band-even");
+  if (c && (c.title === "#" || c.id === "idx" || c.id === "index")) {
+    td.classList.add("col-narrow");
+  }
 
 var input = makeEditor(c, consensusValue(c.id), function(v){
   applyStandardToAll(c.id, input, v);
@@ -716,6 +719,10 @@ function buildBody(){
 // buildBody(): Spalten mit showIf=false als Platzhalter rendern (visibility:hidden)
 COLS.forEach(function(c, idx){
   var td = document.createElement("td");
+  if (c && (c.title === "#" || c.id === "idx" || c.id === "index")) {
+  td.classList.add("col-narrow"); 
+  }
+
   td.className = (idx%2 ? "tx-band-odd":"tx-band-even") + " cell";
 
   if (!columnVisibleForDevice(c, rowDev)) {

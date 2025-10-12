@@ -7,21 +7,17 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="matrix-page">
-  <header>
-    <a class="btn" href="./Index.html">← Übersicht</a>
-    <h1>Einstellungs-Matrix</h1>
-    <div class="spacer"></div>
-    <button class="btn" id="btnSaveBack">Speichern & Zurück</button>
-  </header>
-
-  <div class="wrap">
-    <div class="matrix-layout">
-      <aside class="matrix-rail">
-        <div class="rail-group">
-          <label for="filterDev">Geräte filtern</label>
-          <input id="filterDev" type="text" placeholder="z. B. Stagebox, FOH …">
-        </div>
-      </aside>
+<header>
+  <a class="btn" href="./Index.html">← Übersicht</a>
+  <h1>Einstellungs-Matrix</h1>
+  <div class="header-filter">
+    <label for="filterDev">Geräte filtern:</label>
+    <input id="filterDev" type="text" placeholder="z. B. Stagebox, FOH …" />
+    <span class="desc">Zeigt nur Geräte, deren Name den Filter enthält.</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="btnSaveBack">Speichern & Zurück</button>
+</header>
 
       <div class="matrix-wrap" id="settingsWrap">
         <table class="matrix" id="settingsMatrix">
