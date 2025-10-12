@@ -529,6 +529,7 @@ function attachIpToggle(idx){
     UI.ipExpanded[idx] = !UI.ipExpanded[idx];
     updateIpGroupVisibility(idx);
     btn.textContent = UI.ipExpanded[idx] ? "▾" : "▸";
+    queueAdjustColumnWidths();
   });
   th.appendChild(btn);
 }
@@ -552,6 +553,8 @@ function updateIpGroupVisibility(idx){
   });
   refreshUniformMarks();
   refreshDefaultRowDisplay();
+  queueAdjustColumnWidths();
+
 }
 
 function updateIpModeSVisibility(){
@@ -565,6 +568,7 @@ function updateIpModeSVisibility(){
   });
   refreshUniformMarks();
   refreshDefaultRowDisplay();
+  queueAdjustColumnWidths();
 }
 
 
@@ -817,6 +821,7 @@ function refreshUniformMarks(){
     refreshUniformMarks();
     setupFixedHScrollSettings();
     queueFixedHScrollSettings();  
+    queueAdjustColumnWidths();
     }
 
   function init(){
@@ -841,6 +846,7 @@ renderAll();
           var name = (idx < devices.length) ? devices[idx].name : "";
           row.style.display = keep.has(name) ? "" : "none";
         });
+        refreshDefaultRowDisplay();
       });
     }
     UI.ipExpanded[0] = false;
@@ -848,7 +854,96 @@ renderAll();
     updateIpGroupVisibility(0);
     updateIpGroupVisibility(1);
     updateIpModeSVisibility();
+
+    queueAdjustColumnWidths();
+    window.addEventListener("resize", queueAdjustColumnWidths, {passive:true});
   }
+
+// --- Spaltenbreiten-Logik ---
+var _adjRAF = 0;
+function queueAdjustColumnWidths(){
+  if (_adjRAF) return;
+  _adjRAF = requestAnimationFrame(function(){
+    _adjRAF = 0;
+    try { adjustColumnWidths(); } catch(_){}
+  });
+}
+function adjustColumnWidths(){
+  var wrap = document.getElementById("settingsWrap");
+  var table = document.getElementById("settingsMatrix");
+  var thead = document.getElementById("sHead");
+  var tbody = document.getElementById("sBody");
+  if (!wrap || !table || !thead || !tbody) return;
+
+  var railW = 0;
+  if (thead.rows[0] && thead.rows[0].cells[0]){
+    railW = Math.ceil(thead.rows[0].cells[0].getBoundingClientRect().width);
+  }
+  var wrapW = Math.floor(wrap.clientWidth);
+  if (!wrapW) return;
+
+  var N = COLS.length;
+  if (!N) return;
+
+  var minW = new Array(N).fill(0);
+  for (var i=0;i<N;i++){
+    var headCell = (thead.rows[0] && thead.rows[0].cells[i+1]) ? thead.rows[0].cells[i+1] : null;
+    var defCell  = (thead.rows[1] && thead.rows[1].cells[i+1]) ? thead.rows[1].cells[i+1] : null;
+    var bodyCell = (tbody.rows[0] && tbody.rows[0].cells[i+1]) ? tbody.rows[0].cells[i+1] : null;
+    var w = 0;
+    if (headCell){
+      var prev = headCell.style.width; headCell.style.width = "auto";
+      w = Math.max(w, Math.ceil(headCell.scrollWidth));
+      headCell.style.width = prev;
+    }
+    if (defCell){
+      var ed = defCell.querySelector("select,input");
+      if (ed){
+        var prevW = ed.style.width; ed.style.width = "auto";
+        w = Math.max(w, Math.ceil(ed.scrollWidth)+10);
+        ed.style.width = prevW;
+      }
+    }
+    if (bodyCell){
+      var edb = bodyCell.querySelector("select,input");
+      if (edb){
+        var pW = edb.style.width; edb.style.width = "auto";
+        w = Math.max(w, Math.ceil(edb.scrollWidth)+10);
+        edb.style.width = pW;
+      }else{
+        w = Math.max(w, Math.ceil(bodyCell.scrollWidth));
+      }
+    }
+    minW[i] = Math.max(w, 90);
+  }
+
+  var available = Math.max(wrapW - railW, 0);
+  var sumMin = minW.reduce((a,b)=>a+b, 0);
+  var target = 0;
+  if (available > sumMin){
+    target = Math.floor((available) / N);
+  }
+
+  for (var i2=0;i2<N;i2++){
+    var widthPx = Math.max(minW[i2], target);
+    applyColWidth(i2, widthPx);
+  }
+}
+function applyColWidth(colIdx, px){
+  var thead = document.getElementById("sHead");
+  var tbody = document.getElementById("sBody");
+  var i = colIdx + 1;
+  if (thead){
+    if (thead.rows[0] && thead.rows[0].cells[i]) thead.rows[0].cells[i].style.width = px+"px";
+    if (thead.rows[1] && thead.rows[1].cells[i]) thead.rows[1].cells[i].style.width = px+"px";
+  }
+  if (tbody){
+    for (var r=0;r<tbody.rows.length;r++){
+      var cell = tbody.rows[r].cells[i];
+      if (cell) cell.style.width = px+"px";
+    }
+  }
+}
 
 
 // writeValuesToPreset jetzt top-level (außerhalb von init), wie im Diff
