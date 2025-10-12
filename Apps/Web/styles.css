@@ -721,3 +721,17 @@ body.matrix-page .matrix-wrap{ overflow-x:hidden; overflow-y:auto; }
   border-top:1px solid #e5e5e5;
 }
 #hscrollProxy > .spacer{ height:1px; width:0; display:block; }
+
+.ip-toggle{
+  font: inherit;
+  padding: 0 4px;
+  line-height: 1;
+  border: 1px solid #ccc;
+  background: #f9f9f9;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.ip-toggle:disabled{
+  opacity: .5;
+  cursor: not-allowed;
+}

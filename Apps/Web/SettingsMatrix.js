@@ -1,6 +1,7 @@
 // Apps/Web/SettingsMatrix.js
 (function(){
   var SKEY_XML = "DA_PRESET_XML";
+  var UI = { ipExpanded: {0:false, 1:false} };
 
   if (typeof writeToSessionAndName !== "function"){
   window.writeToSessionAndName = function(xml){
@@ -285,6 +286,9 @@ input.addEventListener("blur", function(){
   if (input.dataset._armed === "1"){
     applyStandardToAll(c.id, input);
     refreshUniformMarks();
+    if (c.id==="ip0_mode") onIpModeChanged(0);
+    if (c.id==="ip1_mode") onIpModeChanged(1);
+    if (c.id==="redundancy") updateIpModeSVisibility();
   }
   input.dataset._armed = "";
 });
@@ -292,6 +296,9 @@ input.addEventListener("blur", function(){
   trDefault.appendChild(td);
 });
     thead.appendChild(trDefault)
+    attachIpToggle(0);
+    attachIpToggle(1);
+    updateIpModeSVisibility();
   }
     // Einmalige Verteilung des Default-Werts auf Geräte ohne Override
 function applyDefaultAsOverrides(colId, value){
@@ -343,6 +350,14 @@ if (tbody && cdef){
     var tbody = $("#sBody"); if (!tbody) return null;
     return tbody.querySelector('[data-scope="cell"][data-col-id="'+colId+'"][data-dev="'+devName+'"]');
   }
+
+function toggleCellEditor(colId, devName, show){
+  var ed = getCellEditor(colId, devName); if (!ed) return;
+  ed.style.display = show ? "" : "none";
+  ed.disabled = show ? false : true;
+}
+
+
   function readCellValue(colId, devName){
     var ed = getCellEditor(colId, devName); if (!ed) return null;
     var c  = getColDef(colId); if (!c) return null;
@@ -383,6 +398,172 @@ COLS.forEach(function(c, idx){
   setEditorControl(c, ed, cv);
 });
 }
+
+function ipCols(idx){
+  return idx === 0
+    ? ["ip0_addr","ip0_mask","ip0_gw","ip0_dns"]
+    : ["ip1_addr","ip1_mask","ip1_gw","ip1_dns"];
+}
+function isStaticModeValue(v){
+  var s = String(v==null? "": v).toLowerCase();
+  return s === "static" || s === "manual";
+}
+function anyDeviceStatic(idx){
+  var modeId = idx===0? "ip0_mode":"ip1_mode";
+  for (var i=0;i<(devices||[]).length;i++){
+    var dn = devices[i].name;
+    var mv = readCellValue(modeId, dn);
+    if (isStaticModeValue(mv)) return true;
+  }
+  return false;
+}
+
+function getStdEditor(colId){
+  var thead = $("#sHead"); if (!thead) return null;
+  var row2 = thead.rows[1]; if (!row2) return null;
+  // +1 weil erste Kopfspalte „Standard“-Label ist
+  var idx = COLS.findIndex(x=>x.id===colId); if (idx<0) return null;
+  var cell = row2.cells[idx+1]; if (!cell) return null;
+  return cell.querySelector('select,input');
+}
+
+function toggleStdEditor(colId, show){
+  var ed = getStdEditor(colId); if (!ed) return;
+  ed.style.display = show ? "" : "none";
+  ed.disabled = show ? false : true;
+}
+function isRedundancyEnabled(v){
+  var s = String(v==null? "": v).toLowerCase();
+  return s === "true" || s === "enabled" || s === "1";
+}
+function anyDeviceRedundancyEnabled(){
+  for (var i=0;i<(devices||[]).length;i++){
+    var dn = devices[i].name;
+    if (isRedundancyEnabled(readCellValue("redundancy", dn))) return true;
+  }
+  return false;
+}
+
+
+function getHeaderCell(colId){
+  var thead = $("#sHead"); if (!thead) return null;
+  var row1 = thead.rows[0]; if (!row1) return null;
+  var idx = COLS.findIndex(x=>x.id===colId); if (idx<0) return null;
+  return row1.cells[idx+1] || null;
+}
+function getBodyEditorsFor(colId){
+  var tbody = $("#sBody"); if (!tbody) return [];
+  return Array.prototype.slice.call(
+    tbody.querySelectorAll('[data-scope="cell"][data-col-id="'+colId+'"]')
+  );
+}
+function setColCellValue(colId, devName, value){
+  var ed = getCellEditor(colId, devName); if (!ed) return;
+  var c  = getColDef(colId); if (!c) return;
+  setEditorControl(c, ed, value);
+  ensureState();
+  if (!state[colId].touched) state[colId].touched = Object.create(null);
+  state[colId].touched[devName] = true;
+}
+function setColDefault(colId, value){
+  ensureState();
+  if (!state[colId]) state[colId] = { default:null, touched:Object.create(null) };
+  state[colId].default = value;
+}
+function collapseIpGroup(idx, reasonDynamic){
+  UI.ipExpanded[idx] = false;
+  var cols = ipCols(idx);
+  // Spalten im Kopf & Body verstecken
+  cols.forEach(function(cid){
+    toggleColumnVisibility(cid, false);
+  });
+  // Wenn dynamisch: alle IP-Werte auf NULL setzen (Standard + alle Devices)
+  if (reasonDynamic){
+    setColDefault(cols[0], null); setColDefault(cols[1], null);
+    setColDefault(cols[2], null); setColDefault(cols[3], null);
+    (devices||[]).forEach(function(d){
+      cols.forEach(function(cid){ setColCellValue(cid, d.name, null); });
+    });
+  }
+  refreshUniformMarks();
+  refreshDefaultRowDisplay();
+}
+function expandIpGroup(idx){
+  UI.ipExpanded[idx] = true;
+  ipCols(idx).forEach(function(cid){
+    toggleColumnVisibility(cid, true);
+  });
+  refreshUniformMarks();
+  refreshDefaultRowDisplay();
+}
+// Sichtbarkeit einer Spalte toggeln (Kopf + Body)
+function toggleColumnVisibility(colId, show){
+  var thead = $("#sHead"), tbody = $("#sBody");
+  var colIndex = COLS.findIndex(x=>x.id===colId);
+  if (colIndex>=0 && thead){
+    var h1 = thead.rows[0], h2 = thead.rows[1];
+    var i = colIndex+1; // +1 wegen erster Beschriftungsspalte
+    if (h1 && h1.cells[i]) h1.cells[i].style.display = show ? "" : "none";
+    if (h2 && h2.cells[i]) h2.cells[i].style.display = show ? "" : "none";
+  }
+  if (tbody){
+    for (var r=0; r<tbody.rows.length; r++){
+      var row = tbody.rows[r];
+      var i = colIndex+1;
+      if (row && row.cells[i]) row.cells[i].style.display = show ? "" : "none";
+    }
+  }
+}
+function attachIpToggle(idx){
+  var colId = idx===0? "ip0_mode":"ip1_mode";
+  var th = getHeaderCell(colId); if (!th) return;
+  var btn = document.createElement("button");
+  btn.type="button"; btn.className="ip-toggle";
+  btn.title="IP-Details ein/aus";
+  btn.textContent = UI.ipExpanded[idx] ? "▾" : "▸";
+  btn.style.marginLeft = "6px";
+  btn.addEventListener("click", function(){
+    UI.ipExpanded[idx] = !UI.ipExpanded[idx];
+    updateIpGroupVisibility(idx);
+    btn.textContent = UI.ipExpanded[idx] ? "▾" : "▸";
+  });
+  th.appendChild(btn);
+}
+
+function onIpModeChanged(idx){
+  var colId = idx===0? "ip0_mode":"ip1_mode";
+  updateIpGroupVisibility(idx);
+}
+
+function updateIpGroupVisibility(idx){
+  var modeId = idx===0? "ip0_mode":"ip1_mode";
+  var cols   = ipCols(idx);
+  var showGroup = UI.ipExpanded[idx] && anyDeviceStatic(idx);
+  cols.forEach(function(cid){ toggleColumnVisibility(cid, showGroup); });
+  (devices||[]).forEach(function(d){
+    var isStatic = isStaticModeValue(readCellValue(modeId, d.name));
+    cols.forEach(function(cid){
+      toggleCellEditor(cid, d.name, showGroup && isStatic);
+      if (!isStatic) setColCellValue(cid, d.name, null);
+    });
+  });
+  refreshUniformMarks();
+  refreshDefaultRowDisplay();
+}
+
+function updateIpModeSVisibility(){
+  var showStd = anyDeviceRedundancyEnabled();
+  toggleStdEditor("ip1_mode", showStd);
+  if (!showStd){ setColDefault("ip1_mode", null); }
+  (devices||[]).forEach(function(d){
+    var enabled = isRedundancyEnabled(readCellValue("redundancy", d.name));
+    toggleCellEditor("ip1_mode", d.name, enabled);
+    if (!enabled) setColCellValue("ip1_mode", d.name, null);
+  });
+  refreshUniformMarks();
+  refreshDefaultRowDisplay();
+}
+
 
 function writeIfTouched(colId, devName, de, xmlKey, options){
   if (!columnTouched(colId, devName)) return;
@@ -493,7 +674,6 @@ function makeEditor(col, value, onChange){
     if (col.max != null) el.max = String(col.max);
     if (col.step!= null) el.step= String(col.step);
     el.value = (value == null ? "" : String(value));
-    el.placeholder = "null";
     el.addEventListener("input", function(){
       var v = el.value;
       onChange(v === "" ? null : Number(v));
@@ -502,7 +682,6 @@ function makeEditor(col, value, onChange){
     el = document.createElement("input");
     el.type = "text";
     el.value = (value == null ? "" : String(value));
-    el.placeholder = "null";
     el.addEventListener("input", function(){
       var v = el.value;
       onChange(v === "" ? null : v);
@@ -554,6 +733,9 @@ var val = (state[c.id] && state[c.id].initial && (rowDev.name in state[c.id].ini
     ensureState();
     state[c.id].touched[rowDev.name] = true;
     refreshUniformMarks();
+    if (c.id==="ip0_mode") onIpModeChanged(0);
+    if (c.id==="ip1_mode") onIpModeChanged(1);
+    if (c.id==="redundancy") updateIpModeSVisibility();
   });
   ed.dataset.scope = "cell";
   ed.dataset.colId = c.id;
@@ -654,6 +836,11 @@ renderAll();
         });
       });
     }
+    UI.ipExpanded[0] = false;
+    UI.ipExpanded[1] = false;
+    updateIpGroupVisibility(0);
+    updateIpGroupVisibility(1);
+    updateIpModeSVisibility();
   }
 
 
